@@ -10,15 +10,26 @@ export class Transformer {
     return `__js_tmp${++this.tempCounter}`;
   }
 
+  resetTemps(): void {
+    // Reset temp counter (called per function scope as per spec)
+    this.tempCounter = 0;
+  }
+
   transform(jsAst: Node): any {
     // Entry point for transformation
     return this.visitNode(jsAst);
   }
 
-  visitNode(node: Node): any {
+  private getVisitor(node: Node): ((node: any) => any) | undefined {
     const method = `visit${node.type}` as keyof this;
-    if (this[method] && typeof this[method] === 'function') {
-      return (this[method] as any)(node);
+    const visitor = this[method];
+    return typeof visitor === 'function' ? (visitor as any).bind(this) : undefined;
+  }
+
+  visitNode(node: Node): any {
+    const visitor = this.getVisitor(node);
+    if (visitor) {
+      return visitor(node);
     }
     throw new UnsupportedNodeError(node, `Unsupported node type: ${node.type}`);
   }

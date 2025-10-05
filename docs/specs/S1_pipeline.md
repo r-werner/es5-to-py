@@ -37,7 +37,7 @@ This spec establishes the transpiler pipeline infrastructure: parser, transforme
 **Core Infrastructure**:
 1. Parser wrapper (`src/parser.js`) using `acorn` with ES5 configuration
 2. Transformer scaffold (`src/transformer.js`) with visitor pattern
-3. Generator (`src/generator.js`) using `@kriss-u/py-ast` to unparse Python AST
+3. Generator (`src/generator.js`) using `py-ast` to unparse Python AST
 4. Import manager (`src/import-manager.js`) with aliased stdlib imports
 5. Error handling infrastructure (`src/errors.js`)
 6. Identifier sanitizer (`src/identifier-sanitizer.js`)
@@ -53,7 +53,7 @@ This spec establishes the transpiler pipeline infrastructure: parser, transforme
 - `allowReserved: true` (ES5 context)
 
 **Walrus Operator Support**:
-- Verify `@kriss-u/py-ast` can unparse walrus operator (`:=` / NamedExpr node)
+- Verify `py-ast` can unparse walrus operator (`:=` / NamedExpr node)
 - Document usage in generated code
 
 ### Out of Scope (Deferred to Later Specs)
@@ -73,14 +73,14 @@ This spec establishes the transpiler pipeline infrastructure: parser, transforme
 - **Language**: TypeScript (strict mode recommended)
 - **Test Framework**: Vitest
 - **Parser**: acorn (ES5 mode)
-- **Python AST Builder**: @kriss-u/py-ast
+- **Python AST Builder**: py-ast
 
 **Dependencies**:
 ```json
 {
   "dependencies": {
     "acorn": "^8.x.x",
-    "@kriss-u/py-ast": "^x.x.x"
+    "py-ast": "^x.x.x"
   },
   "devDependencies": {
     "typescript": "^5.x.x",
@@ -97,7 +97,7 @@ This spec establishes the transpiler pipeline infrastructure: parser, transforme
 - [ ] Configure Vitest with `vitest.config.ts`
 - [ ] Document Node.js version requirement (≥ 18 LTS)
 - [ ] Document Python version requirement (≥ 3.8)
-- [ ] Verify walrus operator support in `@kriss-u/py-ast`
+- [ ] Verify walrus operator support in `py-ast`
 
 **TypeScript Configuration** (`tsconfig.json`):
 ```json
@@ -325,16 +325,16 @@ export class Transformer {
 
 **Implementation**:
 ```typescript
-import * as pyAst from '@kriss-u/py-ast';
+import * as pyAst from 'py-ast';
 
 export function generatePython(pythonAst: any): string {
-  // Use @kriss-u/py-ast to unparse Python AST to source code
+  // Use py-ast to unparse Python AST to source code
   return pyAst.unparse(pythonAst);
 }
 ```
 
 **Requirements**:
-- Use `@kriss-u/py-ast` unparser
+- Use `py-ast` unparser
 - Verify walrus operator (NamedExpr) support
 - Document any unparsing edge cases
 
@@ -588,7 +588,7 @@ After completing S1, the following specs can begin:
 **Day 2**:
 - [ ] Identifier sanitizer with scope-aware mapping
 - [ ] Transformer scaffold with visitor pattern
-- [ ] Generator using `@kriss-u/py-ast`
+- [ ] Generator using `py-ast`
 
 **Day 3**:
 - [ ] Import manager with aliased stdlib imports

@@ -38,7 +38,7 @@ Out of scope (fail fast with explicit errors): `this`, prototypes, classes, `let
 
 ### **3. Target: Python AST and Code Generation**
 
-- Build a Python AST using `@kriss-u/py-ast` node builders and unparse it to Python code. This decouples transformation from formatting and guarantees syntactically valid output.
+- Build a Python AST using `py-ast` node builders and unparse it to Python code. This decouples transformation from formatting and guarantees syntactically valid output.
 - A small runtime library (`js_compat.py`) bridges semantic gaps (truthiness, loose equality, typeof, delete, for-in, Date, regex, console log).
 
 ### **4. Core Transformations (source → target)**

@@ -1,5 +1,13 @@
 type StdlibName = 'math' | 'random' | 're' | 'time';
 
+// Stdlib import aliases (hoisted to module scope for efficiency and testability)
+const STDLIB_ALIASES: Record<StdlibName, string> = {
+  math: '_js_math',
+  random: '_js_random',
+  re: '_js_re',
+  time: '_js_time'
+};
+
 export class ImportManager {
   private stdlibImports = new Set<StdlibName>();
   private runtimeImports = new Set<string>();
@@ -17,15 +25,8 @@ export class ImportManager {
     const imports: string[] = [];
 
     // Stdlib imports with aliases (sorted for determinism)
-    const stdlibAliases: Record<StdlibName, string> = {
-      math: '_js_math',
-      random: '_js_random',
-      re: '_js_re',
-      time: '_js_time'
-    };
-
     for (const lib of Array.from(this.stdlibImports).sort()) {
-      imports.push(`import ${lib} as ${stdlibAliases[lib]}`);
+      imports.push(`import ${lib} as ${STDLIB_ALIASES[lib]}`);
     }
 
     // Runtime imports (sorted for determinism)
@@ -35,5 +36,9 @@ export class ImportManager {
     }
 
     return imports;
+  }
+
+  emitHeader(): string {
+    return this.generateImports().join('\n');
   }
 }

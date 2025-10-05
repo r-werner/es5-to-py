@@ -584,7 +584,7 @@ visitProgram(node) {
 
 parseImports(importStr) {
   // Parse import strings to Python AST nodes
-  // Use @kriss-u/py-ast or manual construction
+  // Use py-ast or manual construction
   // For simplicity, use string-based approach and parse
 }
 ```

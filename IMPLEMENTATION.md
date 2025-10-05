@@ -72,7 +72,7 @@ Before implementing, ensure these key semantic issues are addressed:
    - Pattern: `a && (x = y)` → `((x := y) if js_truthy(__js_tmp1 := a) else __js_tmp1)`
    - **CRITICAL**: Ensure single-evaluation semantics (evaluate RHS once, assign, use value)
    - **CRITICAL**: Handle ALL contexts that can host assignment: if/while tests, logical expressions, ternaries, call args, return values
-   - Verify `@kriss-u/py-ast` supports walrus operator (NamedExpr node)
+   - Verify `py-ast` supports walrus operator (NamedExpr node)
 
 21. **Single-evaluation of assignment/update targets**: For `MemberExpression` targets, capture base and key in temps before read/compute/write.
    - `obj().prop += f()` must evaluate `obj()` exactly once
@@ -228,8 +228,8 @@ Before implementing, ensure these key semantic issues are addressed:
 
 ### 1.1 Project Setup
 - [ ] ❌ Create project structure (src/, tests/, runtime/)
-- [ ] ❌ Initialize package.json with dependencies: `acorn`, `@kriss-u/py-ast`
-  - **Pin versions**: Specify exact versions for `acorn` and `@kriss-u/py-ast` for reproducibility
+- [ ] ❌ Initialize package.json with dependencies: `acorn`, `py-ast`
+  - **Pin versions**: Specify exact versions for `acorn` and `py-ast` for reproducibility
   - Document Node.js version (e.g., Node 18 LTS) and Python version (≥ 3.8 required)
 - [ ] ❌ Configure TypeScript/JavaScript environment
 - [ ] ❌ Set up test framework (Jest or similar)
@@ -238,7 +238,7 @@ Before implementing, ensure these key semantic issues are addressed:
   - Add `--run` flag to execute transpiled Python immediately
   - Add `--verbose` flag for debugging (show AST, etc.)
   - Emit Python version check in generated code header comment: `# Requires Python >= 3.8`
-- [ ] ❌ **Verify walrus support**: Test that `@kriss-u/py-ast` can unparse walrus operator (`:=` / NamedExpr node)
+- [ ] ❌ **Verify walrus support**: Test that `py-ast` can unparse walrus operator (`:=` / NamedExpr node)
   - Required for assignment-in-expression contexts
   - Document walrus operator usage in generated code
 
@@ -273,7 +273,7 @@ Before implementing, ensure these key semantic issues are addressed:
     - `function f(None) { return None; }` → parameter and reference both sanitized
     - `obj.class` → property key NOT sanitized (uses subscript `obj['class']`)
 - [ ] ❌ Create `src/transformer.ts`: Base visitor class/framework for traversing ESTree AST
-- [ ] ❌ Create `src/generator.ts`: Python AST unparsing using `@kriss-u/py-ast`
+- [ ] ❌ Create `src/generator.ts`: Python AST unparsing using `py-ast`
 - [ ] ❌ Create `src/import-manager.ts`: Track required imports with **aliasing**
   - Use aliased imports to avoid collisions: `import math as _js_math`, `import random as _js_random`, `import re as _js_re`, `import time as _js_time`
   - Track which aliases are needed based on feature usage
@@ -1674,7 +1674,7 @@ switch (x) {
 **AST References:**
 - ESTree spec: https://github.com/estree/estree
 - Python AST: https://docs.python.org/3/library/ast.html
-- `@kriss-u/py-ast`: Check package documentation for node builders
+- `py-ast`: Check package documentation for node builders
 - Acorn parser: https://github.com/acornjs/acorn
 
 **Runtime Design:** Keep runtime minimal. Prefer simple, well-tested helpers over complex inline transformations. Document all unsupported edge cases.
