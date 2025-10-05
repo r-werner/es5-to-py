@@ -69,7 +69,7 @@ describe('Pipeline Skeleton', () => {
 
     const imports = mgr.generateImports();
     expect(imports).toContain('import math as _js_math');
-    expect(imports).toContain('from js_compat import JSUndefined, js_truthy');
+    expect(imports).toContain('from runtime.js_compat import JSUndefined, js_truthy');
   });
 
   test('Import manager sorts imports deterministically', () => {
@@ -82,7 +82,7 @@ describe('Pipeline Skeleton', () => {
     const imports = mgr.generateImports();
     expect(imports[0]).toBe('import math as _js_math');
     expect(imports[1]).toBe('import re as _js_re');
-    expect(imports[2]).toBe('from js_compat import JSUndefined, js_truthy');
+    expect(imports[2]).toBe('from runtime.js_compat import JSUndefined, js_truthy');
   });
 
   test('Temp allocator generates unique names', () => {

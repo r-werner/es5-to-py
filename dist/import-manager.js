@@ -26,7 +26,7 @@ export class ImportManager {
         // Runtime imports (sorted for determinism)
         if (this.runtimeImports.size > 0) {
             const runtimeList = Array.from(this.runtimeImports).sort().join(', ');
-            imports.push(`from js_compat import ${runtimeList}`);
+            imports.push(`from runtime.js_compat import ${runtimeList}`);
         }
         return imports;
     }

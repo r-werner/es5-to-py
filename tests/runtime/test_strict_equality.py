@@ -1,6 +1,5 @@
 """Tests for js_strict_eq and js_strict_neq runtime helpers."""
 
-import math
 import pytest
 from runtime.js_compat import JSUndefined, js_strict_eq, js_strict_neq
 
@@ -78,3 +77,11 @@ class TestStrictEquality:
         """+0 === -0 in JS (we don't distinguish)"""
         assert js_strict_eq(0, -0) is True
         assert js_strict_eq(0.0, -0.0) is True
+
+    def test_int_float_equality(self):
+        """CRITICAL: 1 === 1.0 is true in JS (numeric type compatibility)"""
+        assert js_strict_eq(1, 1.0) is True
+        assert js_strict_neq(1, 1.0) is False
+        assert js_strict_eq(0, 0.0) is True
+        assert js_strict_eq(42, 42.0) is True
+        assert js_strict_eq(-5, -5.0) is True

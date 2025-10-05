@@ -103,15 +103,17 @@ def js_strict_eq(a: object, b: object) -> bool:
     """
     JavaScript strict equality (===) semantics.
 
-    - NaN !== NaN → True (use math.isnan())
-    - null === null → True (a is None and b is None)
-    - undefined === undefined → True (a is JSUndefined and b is JSUndefined)
-    - Primitives (str, int, float, bool): value equality (a == b)
+    Key rules:
+    - NaN === NaN → False (therefore NaN !== NaN is True)
+    - null === null → True (identity check: a is None and b is None)
+    - undefined === undefined → True (identity check: a is JSUndefined and b is JSUndefined)
+    - Numbers (int/float): value equality (1 === 1.0 is True; bool excluded from numeric bucket)
+    - Primitives (str, bool): value equality
     - Objects/arrays/functions (dict, list, callable): identity (a is b)
 
     Note: -0 vs +0 distinction not implemented (acceptable for demo).
     """
-    # NaN handling: NaN !== NaN
+    # NaN handling: NaN !== NaN in JavaScript
     if isinstance(a, float) and _js_math.isnan(a):
         return False
     if isinstance(b, float) and _js_math.isnan(b):
@@ -123,12 +125,17 @@ def js_strict_eq(a: object, b: object) -> bool:
     if a is JSUndefined and b is JSUndefined:
         return True
 
-    # Type check
-    if type(a) != type(b):
+    # Numbers: int/float mix allowed (bool excluded)
+    # In JS, 1 === 1.0 is true
+    if type(a) in (int, float) and type(b) in (int, float):
+        return float(a) == float(b)
+
+    # Type mismatch otherwise → False
+    if type(a) is not type(b):
         return False
 
-    # Primitives: value equality
-    if isinstance(a, (str, int, float, bool)):
+    # Primitives (excluding numbers handled above)
+    if isinstance(a, (str, bool)):
         return a == b
 
     # Objects/arrays/functions: identity

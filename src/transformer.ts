@@ -227,30 +227,21 @@ export class Transformer {
     const tempLoad = PyAST.Name(temp, 'Load');
     const right = this.visitNode(node.right);
 
+    // DRY: Build js_truthy call once
+    const truthyTest = PyAST.Call(
+      PyAST.Name('js_truthy', 'Load'),
+      [leftWalrus],
+      []
+    );
+
     if (node.operator === '&&') {
       // a && b → (b if js_truthy(__js_tmp1 := a) else __js_tmp1)
-      return PyAST.IfExp(
-        PyAST.Call(
-          PyAST.Name('js_truthy', 'Load'),
-          [leftWalrus],
-          []
-        ),
-        right,
-        tempLoad
-      );
+      return PyAST.IfExp(truthyTest, right, tempLoad);
     }
 
     if (node.operator === '||') {
       // a || b → (__js_tmp1 if js_truthy(__js_tmp1 := a) else b)
-      return PyAST.IfExp(
-        PyAST.Call(
-          PyAST.Name('js_truthy', 'Load'),
-          [leftWalrus],
-          []
-        ),
-        tempLoad,
-        right
-      );
+      return PyAST.IfExp(truthyTest, tempLoad, right);
     }
 
     throw new UnsupportedFeatureError(

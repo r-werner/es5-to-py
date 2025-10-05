@@ -50,7 +50,7 @@ describe('S2: Global Identifiers', () => {
   test('undefined identifier', () => {
     const { python, imports } = transpile('undefined');
     expect(python).toBe('JSUndefined');
-    expect(imports).toContain('from js_compat import JSUndefined');
+    expect(imports).toContain('from runtime.js_compat import JSUndefined');
   });
 
   test('NaN identifier', () => {
@@ -124,13 +124,13 @@ describe('S2: Strict Equality', () => {
   test('=== operator', () => {
     const { python, imports } = transpile('x === y');
     expect(python).toBe('js_strict_eq(x, y)');
-    expect(imports).toContain('from js_compat import js_strict_eq');
+    expect(imports).toContain('from runtime.js_compat import js_strict_eq');
   });
 
   test('!== operator', () => {
     const { python, imports } = transpile('x !== y');
     expect(python).toBe('js_strict_neq(x, y)');
-    expect(imports).toContain('from js_compat import js_strict_neq');
+    expect(imports).toContain('from runtime.js_compat import js_strict_neq');
   });
 });
 
@@ -161,14 +161,14 @@ describe('S2: Logical Operators', () => {
     const { python, imports } = transpile('a && b');
     expect(python).toContain(':=');
     expect(python).toContain('js_truthy');
-    expect(imports).toContain('from js_compat import js_truthy');
+    expect(imports).toContain('from runtime.js_compat import js_truthy');
   });
 
   test('|| operator uses walrus', () => {
     const { python, imports } = transpile('a || b');
     expect(python).toContain(':=');
     expect(python).toContain('js_truthy');
-    expect(imports).toContain('from js_compat import js_truthy');
+    expect(imports).toContain('from runtime.js_compat import js_truthy');
   });
 
   test('&& returns right if truthy', () => {
@@ -188,7 +188,7 @@ describe('S2: Unary Operators', () => {
   test('! (not) operator', () => {
     const { python, imports } = transpile('!x');
     expect(python).toBe('(not js_truthy(x))');
-    expect(imports).toContain('from js_compat import js_truthy');
+    expect(imports).toContain('from runtime.js_compat import js_truthy');
   });
 
   test('Unary minus', () => {
@@ -206,7 +206,7 @@ describe('S2: Ternary Operator', () => {
   test('Simple ternary', () => {
     const { python, imports } = transpile('x ? 1 : 0');
     expect(python).toBe('1 if js_truthy(x) else 0');
-    expect(imports).toContain('from js_compat import js_truthy');
+    expect(imports).toContain('from runtime.js_compat import js_truthy');
   });
 
   test('Ternary with expressions', () => {
@@ -242,13 +242,13 @@ describe('S2: Complex Expressions', () => {
 describe('S2: Import Management', () => {
   test('Multiple runtime imports are sorted', () => {
     const { imports } = transpile('undefined === null && !x');
-    expect(imports).toBe('from js_compat import JSUndefined, js_strict_eq, js_truthy');
+    expect(imports).toBe('from runtime.js_compat import JSUndefined, js_strict_eq, js_truthy');
   });
 
   test('Both stdlib and runtime imports', () => {
     const { imports } = transpile('Infinity === undefined');
     const lines = imports.split('\n');
     expect(lines[0]).toBe('import math as _js_math');
-    expect(lines[1]).toBe('from js_compat import JSUndefined, js_strict_eq');
+    expect(lines[1]).toBe('from runtime.js_compat import JSUndefined, js_strict_eq');
   });
 });
