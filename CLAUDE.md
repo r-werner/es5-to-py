@@ -34,7 +34,7 @@ These are the most critical correctness requirements that are easy to violate. *
 - `None` represents JS `null`
 - `JSUndefined` (singleton sentinel) represents JS `undefined`
 - Uninitialized vars → `JSUndefined`
-- Global identifiers: `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `math.inf`
+- Global identifiers: `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `_js_math.inf` (aliased import)
 
 ### 3. **Bare Return Yields undefined**
 - `return;` (without expression) → `return JSUndefined` (NOT Python's implicit `None`)

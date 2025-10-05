@@ -49,7 +49,7 @@ Before implementing, ensure these key semantic issues are addressed:
 
 12. **Strict equality edge cases**: Handle NaN (`NaN !== NaN`). **Decision on -0 vs +0**: JS treats `-0 === +0` as `true`. Document if skipping -0 distinction (acceptable for demo).
 
-13. **js_truthy coverage**: Include `NaN` as falsy (use `math.isnan()`). Empty arrays/objects are truthy.
+13. **js_truthy coverage**: Include `NaN` as falsy (use `_js_math.isnan()`). Empty arrays/objects are truthy.
 
 14. **String method edge cases**:
     - `charAt(i)`: Use `str[i:i+1]` for out-of-range → empty string
@@ -114,8 +114,8 @@ Before implementing, ensure these key semantic issues are addressed:
      - `RegExp(pattern, flags)` constructor → Error code `E_REGEXP_CONSTRUCTOR_UNSUPPORTED`. Message: "RegExp() constructor is not supported. Use regex literals /pattern/flags instead."
      - `Number(x)`, `String(x)`, `Boolean(x)` constructors → Error with alternatives (use `js_to_number`, string coercion, `js_truthy`)
    - **Minimal support** (runtime wrappers):
-     - `isNaN(x)` → `js_isnan(x)` runtime helper (use `js_to_number` then `math.isnan`)
-     - `isFinite(x)` → `js_isfinite(x)` runtime helper (use `js_to_number` then `math.isfinite`)
+     - `isNaN(x)` → `js_isnan(x)` runtime helper (use `js_to_number` then `_js_math.isnan`)
+     - `isFinite(x)` → `js_isfinite(x)` runtime helper (use `js_to_number` then `_js_math.isfinite`)
    - Document all global function policies in "Known Limitations" and error message tables
 
 27. **Array and Object library methods**: Most array/object methods are **out of scope**.
@@ -261,7 +261,7 @@ Before implementing, ensure these key semantic issues are addressed:
   - Falsy: `''` (empty string), `0`, `-0`, `None` (null), `JSUndefined`, `float('nan')` (NaN)
   - Truthy: `[]` (empty list), `{}` (empty dict), all other values (non-empty strings, non-zero numbers, objects)
   - **CRITICAL**: Empty dict/list are truthy (JS semantics); only empty string/0/NaN/undefined/null/−0 are falsy
-  - **CRITICAL**: NaN must be falsy (use `math.isnan()` check for float values)
+  - **CRITICAL**: NaN must be falsy (use `_js_math.isnan()` check for float values)
 - [ ] ❌ Implement `class JSException(Exception)`: Store arbitrary thrown value in `.value` attribute
 - [ ] ❌ Add basic module structure with `__all__` export list
 
@@ -295,7 +295,7 @@ Before implementing, ensure these key semantic issues are addressed:
   - **CRITICAL BUG FIX**: Cannot use Python `==` for objects/arrays/functions
   - JS `{} === {}` is `false` (identity); Python `{} == {}` is `True` (value equality)
   - Runtime helper `js_strict_eq(a, b)` must:
-    - Handle NaN: `NaN !== NaN` → `True` (use `math.isnan()`)
+    - Handle NaN: `NaN !== NaN` → `True` (use `_js_math.isnan()`)
     - Handle null: `None` identity
     - Handle undefined: `JSUndefined` identity
     - Primitives (string, number, boolean): value equality
@@ -872,11 +872,11 @@ switch (x) {
   - Add test that intentionally tries to bypass (validates validator catches it)
 - [ ] ❌ Implement `js_strict_eq(a, b)` in runtime:
   - **CRITICAL**: Handle object/array/function identity (NOT value equality)
-  - NaN handling: `math.isnan(a) and math.isnan(b)` → `False` (NaN !== NaN)
+  - NaN handling: `_js_math.isnan(a) and _js_math.isnan(b)` → `False` (NaN !== NaN)
   - **-0 vs +0 decision**: JS treats `-0 === +0` as `true`
     - For demo: Accept Python's default behavior (no distinction)
     - Document limitation: "-0 vs +0 distinction not implemented"
-    - If needed: Check `math.copysign(1, a) == math.copysign(1, b)` for sign
+    - If needed: Check `_js_math.copysign(1, a) == _js_math.copysign(1, b)` for sign
   - null: `a is None and b is None` → `True`
   - undefined: `a is JSUndefined and b is JSUndefined` → `True`
   - Primitives (str, int, float, bool): value equality `a == b`
@@ -897,8 +897,8 @@ switch (x) {
 
 ### 4.2 Arithmetic and Coercion Helpers
 - [ ] ❌ Implement `js_isnan(x)` and `js_isfinite(x)` in runtime:
-  - `js_isnan(x)`: Use `js_to_number(x)` then `math.isnan(result)`
-  - `js_isfinite(x)`: Use `js_to_number(x)` then `math.isfinite(result)`
+  - `js_isnan(x)`: Use `js_to_number(x)` then `_js_math.isnan(result)`
+  - `js_isfinite(x)`: Use `js_to_number(x)` then `_js_math.isfinite(result)`
   - Map global `isNaN(x)` → `js_isnan(x)`, `isFinite(x)` → `js_isfinite(x)`
   - Add to runtime library and import when used
 - [ ] ❌ Implement `js_to_number(x)` in runtime (ToNumber coercion):
@@ -921,9 +921,9 @@ switch (x) {
 - [ ] ❌ Implement `js_mod(a, b)` in runtime:
   - Python: `-1 % 2` → `1` (result has sign of divisor)
   - JS: `-1 % 2` → `-1` (result has sign of dividend)
-  - Use: `a - (b * math.trunc(a / b))` to match JS semantics
+  - Use: `a - (b * _js_math.trunc(a / b))` to match JS semantics
 - [ ] ❌ Implement `js_div(a, b)` in runtime:
-  - Handle division by zero: `1/0` → `math.inf`, `-1/0` → `-math.inf`
+  - Handle division by zero: `1/0` → `_js_math.inf`, `-1/0` → `-_js_math.inf`
   - Coerce operands with `js_to_number` if supporting mixed types
   - Document: numeric-only for demo, or full coercion
 - [ ] ❌ Optional: Implement `js_sub()`, `js_mul()` for full ToNumber coercion
@@ -962,7 +962,7 @@ switch (x) {
   - `None == JSUndefined` → `True` (null == undefined)
   - Number and string → coerce string to number with `js_to_number()`
   - Boolean → coerce to number (True → 1, False → 0) then compare
-  - NaN handling: `NaN == NaN` → `False` (use `math.isnan()`)
+  - NaN handling: `NaN == NaN` → `False` (use `_js_math.isnan()`)
   - **Explicitly unsupported** (error with code `E_LOOSE_EQ_OBJECT`):
     - If either operand is list/dict/callable → error
     - Object to primitive coercion (ToPrimitive)
@@ -1476,12 +1476,12 @@ switch (x) {
 - **Strict equality**: Use `js_strict_eq()` for ALL `===` (including switch); identity for objects, value for primitives; -0 vs +0 not distinguished
 - **Augmented assignment**: `+=` uses `js_add()` (string concat + numeric); `-=`/`*=`/`/=`/`%=` numeric-only (error on type mismatch)
 - **Loose equality**: Primitives + null/undefined only; error on objects/arrays (ToPrimitive complexity)
-- **Global identifiers**: Map `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `math.inf`
+- **Global identifiers**: Map `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `_js_math.inf`
 - **Member access**: Default to subscript `obj['prop']` (reads AND writes); exception: `.length` detection
 - **Break/Continue validation**: Pre-pass tags nodes with loop/switch ancestry for better diagnostics
 - **Switch fall-through**: Static validator detects non-empty fall-through and errors early
 - **Console.log**: Map to runtime `console_log()` function (not direct `print`)
-- **Imports**: Deterministic order (stdlib first: math, random, re; then runtime imports sorted); no unused imports; test for unused imports
+- **Imports**: Deterministic order (aliased stdlib first: `import math as _js_math`, `import random as _js_random`, `import re as _js_re`, `import time as _js_time`; then runtime imports sorted); no unused imports; test for unused imports
 - **Temp naming**: Use `__js_tmp<n>` prefix for all temps; `__js_switch_disc_<id>` for switch discriminants; document to avoid collisions
 - **Nested functions**: Lexically scoped but NOT hoisted (call-after-definition only; error otherwise)
 - **No try/catch**: Out of scope; throw raises JSException but cannot be caught
