@@ -1,135 +1,193 @@
 # CLAUDE.md
 
-This file provides high-level guidance to Claude Code when working with this ES5-to-Python transpiler.
-
-**For detailed implementation tasks, requirements, and checklists, see `IMPLEMENTATION.md`.**
-
-## Project Overview
-
-ES5-to-Python transpiler: Converts a defined subset of ES5 JavaScript into executable Python code. This is a technology demo that prioritizes **correctness over performance** and **fails fast** on unsupported constructs.
-
-**Requirements**:
-- Python ≥ 3.8 REQUIRED (walrus operator used for logical expressions and assignment-in-expression)
-- Node.js (for acorn parser)
-
-## Architecture
-
-Three-stage pipeline:
-
-1. **Parse**: `acorn` (ES5 mode) → ESTree AST
-2. **Transform**: ESTree AST → Python AST (via `@kriss-u/py-ast`)
-3. **Generate**: Python AST → Python source code
-
-**Key Components**:
-- **Transformer**: ESTree visitor with two-pass var hoisting and control flow desugaring
-- **Import Manager**: Tracks and injects imports (`math`, `random`, `re`, `js_compat`) only when needed
-- **Runtime Library** (`js_compat.py`): Bridges JS/Python semantic gaps
-
-## Scope
-
-**Supported (ES5 subset)**:
-- Functions (nested, call-after-definition only), var declarations (hoisted)
-- Control flow: if/else, while, for (C-style and for-in), switch/case, break/continue, return, throw
-- Expressions: ternary, logical, comparison, arithmetic, member/index access, calls, unary operators, literals
-- Data: strings, numbers, booleans, null, regex literals, arrays, objects (simple keys only)
-- Built-ins: Math.*, String methods, new Date(), console.log
-
-**Not Supported (errors with helpful messages)**:
-- ES6+ features: let/const, classes, arrow functions, destructuring, etc.
-- Advanced ES5: this, prototypes, closures (beyond lexical nesting), try/catch, with
-- Operators: bitwise (`|`, `&`, `^`, etc.), in, instanceof
-- Methods: Array methods (push, map, etc.), Object methods (Object.keys, etc.)
-- Dynamic keys, computed properties, switch fall-through between non-empty cases
-
-**See `IMPLEMENTATION.md` for complete scope details and error codes.**
-
-## Critical Correctness Gotchas
-
-These are the **most error-prone** semantic differences between JS and Python. Always keep these in mind:
-
-1. **Strict equality for objects/arrays is broken in Python**
-   - **THE BUG**: Python `==` uses value equality; JS `===` uses identity for objects
-   - `{} === {}` → `False` in JS, but `{} == {}` → `True` in Python
-   - **SOLUTION**: Use `js_strict_eq(a, b)` helper for ALL `===` comparisons (including switch cases)
-   - Primitives use value equality; objects/arrays/functions use identity (`is`)
-
-2. **null vs undefined are different values**
-   - `None` = JS `null`, `JSUndefined` = JS `undefined` (distinct sentinel)
-   - Uninitialized vars → `JSUndefined`, bare `return;` → `return JSUndefined`
-   - Global identifiers: `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `math.inf`
-
-3. **Logical operators return operands, not booleans**
-   - `'a' && 0` → `0` (not `False`), `0 || 'x'` → `'x'` (not `True`)
-   - Use walrus operator: `a && b` → `(b if js_truthy(_temp := a) else _temp)`
-
-4. **For-loop continue must execute update**
-   - `for(init; test; update)` desugars to while loop
-   - **CRITICAL**: Rewrite `continue` to execute update first (use loop ID tagging)
-
-5. **Member access uses subscript by default**
-   - `obj.prop` → `obj['prop']` (reads AND writes) to avoid attribute shadowing
-   - Exception: `.length` property detection
-
-6. **Switch uses strict equality and caches discriminant**
-   - Case matching uses `js_strict_eq` (not Python `==`)
-   - Discriminant evaluated once and cached in temp variable
-
-7. **Assignment in expressions uses walrus**
-   - `if (x = y)` → `if js_truthy(x := y): ...` (walrus operator)
-
-**See `IMPLEMENTATION.md` for complete list of 32 critical requirements.**
-
-## Transformation Strategy
-
-**Key Principles**:
-- **Two-pass var hoisting**: Collect all `var` names, emit `name = JSUndefined` initializers at function top
-- **Control flow desugaring**: For-loops → while loops; switch → `while True` + if/elif/else
-- **Default to subscript**: `obj.prop` → `obj['prop']` (avoids attribute/method shadowing)
-- **Runtime helpers over inline code**: Keep transformer simple, bridge gaps in `js_compat.py`
-- **Walrus for expressions**: Use `:=` for logical operators and assignment-in-expression (Python 3.8+)
-- **Deterministic imports**: Only import what's used; stdlib aliased (`_js_math`, `_js_random`, `_js_re`), then `js_compat`
-
-## Error Handling Philosophy
-
-**Fail fast** on unsupported features with **actionable error messages**:
-1. What failed (node type, feature)
-2. Why (out of scope)
-3. How to fix (suggestion or workaround)
-4. Error code (e.g., `E_BITWISE_UNSUPPORTED`)
-
-Example: `"Bitwise OR operator (|) is not supported. Use Math.floor() to truncate or arithmetic equivalents. [E_BITWISE_UNSUPPORTED]"`
-
-**See `IMPLEMENTATION.md` for complete error code reference (13 codes).**
-
-## Runtime Library (`js_compat.py`)
-
-**Core helpers** (see `IMPLEMENTATION.md` for complete API):
-- `JSUndefined`: Singleton sentinel for JS `undefined` (distinct from `None` = null)
-- `js_truthy(x)`: JS truthiness (empty arrays/objects are truthy, NaN is falsy)
-- `js_strict_eq(a,b)`: Strict equality with identity checks for objects/arrays
-- `js_loose_eq(a,b)`: Loose equality (primitives only; errors on objects)
-- `js_typeof(x)`: JS typeof operator
-- `js_add(a,b)`: String concat or numeric addition
-- `js_mod(a,b)`: JS remainder (dividend sign)
-- `js_delete(base, key)`: Delete with array hole support
-- `js_for_in_keys(x)`: Enumerate keys as strings, skip holes
-- `compile_js_regex(pattern, flags)`: Regex literal compiler
-- `JSDate`, `JSException`, `console_log`, string helpers, etc.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Quick Reference
 
-**Parser**: `acorn` with `{ ecmaVersion: 5, sourceType: 'script', locations: true, ranges: true }`
+- **Detailed implementation plan**: See `IMPLEMENTATION.md` for phase-by-phase tasks, checklists, and acceptance criteria
+- **Transformation rules**: See `plan.md` for complete mapping rules
+- **Python requirement**: Python ≥ 3.8 (walrus operator `:=` is required for assignment-in-expression and logical operators)
 
-**AST Builder**: `@kriss-u/py-ast` for guaranteed syntactic validity
+## Project Overview
 
-**Temp Variables**: Use `__js_tmp<n>` prefix to avoid collisions
+ES5-to-Python transpiler: Converts a defined subset of ES5 JavaScript into executable Python code. This is a technology demo that handles core language features while explicitly failing fast on unsupported constructs.
 
-**Import Order**: stdlib first (`import math`, `import random`, `import re`), then `from js_compat import ...`
+**Three-stage pipeline:**
+1. **Parse**: Use `acorn` parser (ES5 mode) to generate ESTree-compatible AST
+2. **Transform**: Convert JavaScript AST to Python AST using `@kriss-u/py-ast` node builders
+3. **Generate**: Unparse Python AST to source code
 
-**CLI Flags**: `--output <file>`, `--run`, `--verbose`
+**Runtime library** (`js_compat.py`): Bridges semantic gaps between JavaScript and Python (truthiness, equality, typeof, delete, for-in, Date, regex).
 
-## Where to Look
+## Critical Design Principles (READ FIRST)
 
-- **IMPLEMENTATION.md**: Complete implementation checklist, all 32 critical requirements, error codes, phase-by-phase tasks
-- **plan.md**: Detailed transformation rules and semantic mappings
-- **This file**: High-level architecture, critical gotchas, quick reference
+These are the most critical correctness requirements that are easy to violate. **Always consult IMPLEMENTATION.md Critical Correctness Requirements section for the complete list.**
+
+### 1. **Strict Equality Requires Runtime Helper**
+**CRITICAL BUG**: Python `==` uses value equality; JS `===` uses identity for objects.
+- `{} === {}` → `False` in JS, but `{} == {}` → `True` in Python
+- **Must use** `js_strict_eq(a, b)` runtime helper for ALL `===` comparisons (including switch cases)
+- Primitives use value equality; objects/arrays/functions use identity (`is`)
+- Handle NaN: `NaN !== NaN` → `True`
+
+### 2. **null vs undefined Are Different**
+- `None` represents JS `null`
+- `JSUndefined` (singleton sentinel) represents JS `undefined`
+- Uninitialized vars → `JSUndefined`
+- Global identifiers: `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `math.inf`
+
+### 3. **Bare Return Yields undefined**
+- `return;` (without expression) → `return JSUndefined` (NOT Python's implicit `None`)
+- JS bare return yields `undefined`, not `null`
+
+### 4. **Walrus Operator Strategy (Python ≥ 3.8 Required)**
+- Assignment in expression context uses walrus operator: `if (x = y)` → `if (x := y)`
+- Logical operators use walrus for single-eval: `a && b` → `(b if js_truthy(_temp := a) else _temp)`
+- SequenceExpression supported in all contexts
+- No fallback mode; Python 3.8+ is mandatory
+
+### 5. **Member Access Always Uses Subscript**
+- `obj.prop` → `obj['prop']` for ALL property access (reads AND writes)
+- Avoids attribute shadowing; consistent for dicts
+- Exception: `.length` property detection → `len()`
+
+### 6. **Switch Discriminant Must Be Cached**
+- Evaluate discriminant once and store in temp variable
+- Prevents re-evaluation if discriminant has side effects
+- Use strict equality (`js_strict_eq`) for ALL case matching
+
+### 7. **Continue in For-Loops Must Execute Update**
+- C-style `for(init; test; update)` desugars to `while` loop
+- **CRITICAL**: Rewrite `continue` to execute update before jumping to test
+- Use loop ID tagging to prevent incorrect update injection in nested loops
+
+## Common Pitfalls to Avoid
+
+### Anti-Patterns That Break Semantics
+
+❌ **DON'T** use Python `==` for `===` comparisons
+```python
+# WRONG: {} == {} is True in Python
+if obj1 == obj2:
+
+# RIGHT: Use runtime helper
+if js_strict_eq(obj1, obj2):
+```
+
+❌ **DON'T** use `None` for uninitialized variables
+```python
+# WRONG: JS undefined becomes Python null
+x = None
+
+# RIGHT: Use JSUndefined sentinel
+x = JSUndefined
+```
+
+❌ **DON'T** use attribute access for object properties
+```python
+# WRONG: Shadows Python dict methods
+obj.prop = value
+
+# RIGHT: Use subscript access
+obj['prop'] = value
+```
+
+❌ **DON'T** forget to cache switch discriminant
+```python
+# WRONG: Re-evaluates side effects
+while True:
+    if js_strict_eq(getSomeValue(), case1):
+
+# RIGHT: Cache discriminant
+_switch_disc = getSomeValue()
+while True:
+    if js_strict_eq(_switch_disc, case1):
+```
+
+❌ **DON'T** delete array elements with Python `del`
+```python
+# WRONG: Python shifts elements, changes length
+del arr[1]
+
+# RIGHT: Create hole, preserve length
+arr[1] = JSUndefined
+```
+
+## Supported ES5 Subset
+
+**In scope:**
+- Function declarations (nested functions: call-after-definition only)
+- Statements: `var`, assignments, `if`/`else`, `while`, `for`, `for-in`, `switch`, `return`, `throw`, `break`, `continue`
+- Expressions: ternary, logical, comparison, arithmetic, member access, calls, unary, literals
+- Arrays `[]`, objects `{}` (identifier and string-literal keys only)
+- Constructor: `new Date()` only
+
+**Out of scope (fail fast with error codes):**
+- `this`, prototypes, classes, `let`/`const`, closures beyond lexical nesting
+- `try`/`catch`/`finally`, `with`, `for..of`, dynamic object keys
+- Bitwise operators, array/object methods (`push`, `map`, `Object.keys`, etc.)
+- `in` operator, `instanceof` operator
+- Regex methods `match`/`exec` (only `.test()` and `.replace()` supported)
+- See IMPLEMENTATION.md for complete list with error codes
+
+## Key Transformation Rules
+
+### Variable Hoisting
+- Two-pass per function: collect all `var` names (including nested blocks)
+- Emit `name = JSUndefined` initializers at function top
+
+### Control Flow
+- **For-loops**: Desugar to `while` with continue rewriting
+- **For-in**: Use `js_for_in_keys()` helper (yields strings, skips holes)
+- **Switch**: Transform to `while True` block; static validation detects fall-through
+
+### Built-in Mappings
+- **Math**: Map to Python `math` module or built-ins (`Math.sqrt(x)` → `math.sqrt(x)`)
+- **String**: Map methods with edge cases (`charAt(i)` → `str[i:i+1]`)
+- **Operators**: `+` → `js_add()`, `%` → `js_mod()`, `===` → `js_strict_eq()`, `==` → `js_loose_eq()`
+
+### Import Management
+- Deterministic order: stdlib first (`math`, `random`, `re`), then runtime imports
+- No unused imports
+
+## Where to Find What
+
+| Need | Location |
+|------|----------|
+| Phase-by-phase implementation tasks | `IMPLEMENTATION.md` Phases 1-5 |
+| Critical correctness requirements (complete list) | `IMPLEMENTATION.md` Critical Correctness section |
+| Detailed transformation rules | `plan.md` Section 4 |
+| Runtime API specifications | `IMPLEMENTATION.md` Phase 4 |
+| Test requirements and golden tests | `IMPLEMENTATION.md` Phase 5 |
+| Error codes and messages | `IMPLEMENTATION.md` Critical Correctness #19 and Phase 5.4 |
+| Known limitations | `IMPLEMENTATION.md` Phase 5.7 |
+| Math/String mapping tables | `plan.md` Section 5 |
+
+## Development Workflow
+
+1. **Before implementing any feature**: Check IMPLEMENTATION.md Critical Correctness Requirements
+2. **During implementation**: Follow phase-by-phase tasks in IMPLEMENTATION.md
+3. **For transformation details**: Consult plan.md mapping tables
+4. **For error handling**: Use error codes from IMPLEMENTATION.md
+5. **Testing**: Follow test matrix in IMPLEMENTATION.md Phase 5
+
+## Quick Commands
+
+```bash
+# Parse JavaScript (use acorn with ES5 config)
+acorn.parse(code, { ecmaVersion: 5, sourceType: 'script', locations: true, ranges: true })
+
+# Build Python AST (use @kriss-u/py-ast)
+# Unparse to Python source
+```
+
+## Implementation Status
+
+See `IMPLEMENTATION.md` for task checkboxes and progress tracking:
+- ❌ Not Started
+- 🔄 In Progress
+- ✅ Complete
+
+---
+
+**Remember**: This is a technology demo prioritizing correctness over performance. When in doubt, consult IMPLEMENTATION.md for the authoritative detailed plan.
