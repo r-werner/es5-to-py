@@ -41,8 +41,15 @@ These are the most critical correctness requirements that are easy to violate. *
 - JS bare return yields `undefined`, not `null`
 
 ### 4. **Walrus Operator Strategy (Python ≥ 3.8 Required)**
-- Assignment in expression context uses walrus operator: `if (x = y)` → `if js_truthy(x := y)`
-- Logical operators use walrus for single-eval: `a && b` → `(b if js_truthy(_temp := a) else _temp)`
+- **Assignment in expression context** uses walrus operator (Python `NamedExpr` AST node):
+  - `if (x = y)` → `if js_truthy(x := y): ...`
+  - `f(x = y)` → `f(x := y)` (walrus directly in argument)
+  - `a && (x = y)` → `((x := y) if js_truthy(__js_tmp1 := a) else __js_tmp1)`
+- **Logical operators** use walrus for **single-evaluation guarantee**:
+  - `a && b` → `(b if js_truthy(__js_tmp1 := a) else __js_tmp1)`
+  - `a || b` → `(__js_tmp1 if js_truthy(__js_tmp1 := a) else b)`
+  - Left operand evaluated exactly once via walrus assignment to temp
+  - Returns original operand values (not booleans)
 - **SequenceExpression**: Supported ONLY in for-init/update (e.g., `for(i=0, j=0; ...; i++, j++)`)
 - No fallback mode; Python 3.8+ is mandatory
 
@@ -149,7 +156,9 @@ arr[1] = JSUndefined
 - **Math**: Map to aliased Python `math` module (`Math.sqrt(x)` → `_js_math.sqrt(x)`, `Infinity` → `_js_math.inf`)
 - **String**: Map methods with edge cases (`charAt(i)` → `str[i:i+1]`)
 - **Date**: `new Date()` → `JSDate()`, `Date.now()` → `js_date_now()` (milliseconds since epoch)
-- **Array**: `push(x)` → `append(x)` (single arg only), `pop()` → `pop()`
+- **Array**: `push(x)` → `append(x)` (single arg only), `pop()` → `js_array_pop()` (wrapper returns `JSUndefined` for empty arrays)
+  - **Detection policy**: Only rewrite when receiver is provably an array (array literal or tracked variable)
+  - Ambiguous receivers error with `E_ARRAY_METHOD_AMBIGUOUS`
 - **Operators**: `+` → `js_add()`, `%` → `js_mod()`, `===` → `js_strict_eq()`, `==` → `js_loose_eq()`
 - **Special**: `void expr` → evaluate expr, return `JSUndefined`; `typeof undeclaredVar` → `'undefined'` (no error)
 

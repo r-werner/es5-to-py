@@ -60,16 +60,16 @@ Before implementing, ensure these key semantic issues are addressed:
 
 16. **Member access**: Default to subscript `obj['prop']` for ALL property access (read AND write) to avoid attribute shadowing. Exception: `.length` property detection only.
 
-17. **Logical operators**: Preserve original operand values in short-circuit evaluation, not coerced booleans. Use walrus operator (Python 3.8+). Pattern: `a && b` → `(b if js_truthy(_temp := a) else _temp)`. Ensure single-eval semantics.
+17. **Logical operators**: Preserve original operand values in short-circuit evaluation, not coerced booleans. Use walrus operator (Python 3.8+ NamedExpr). Pattern: `a && b` → `(b if js_truthy(__js_tmp1 := a) else __js_tmp1)`. Ensure single-eval semantics via walrus assignment to temp.
 
 18. **Break/Continue validation**: Add pre-pass to tag nodes with loop/switch ancestry for better error messages ("continue inside switch", "break outside loop").
 
 19. **Error messages**: Include node type, location, "why" explanation, and "what to change" suggestion. Optional: Add error codes (e.g., `E_UNSUPPORTED_FEATURE`) for programmatic filtering.
 
 20. **AssignmentExpression used as expression**: JS allows assignments inside `if`, `while`, logical expressions, and ternaries.
-   - **DECISION**: Use walrus operator (`:=`) since Python ≥ 3.8 is required
+   - **DECISION**: Use walrus operator (`:=` / Python NamedExpr) since Python ≥ 3.8 is required
    - Pattern: `if (x = y)` → `if js_truthy(x := y): ...`
-   - Pattern: `a && (x = y)` → `(x := y) if js_truthy(_temp := a) else _temp`
+   - Pattern: `a && (x = y)` → `((x := y) if js_truthy(__js_tmp1 := a) else __js_tmp1)`
    - **CRITICAL**: Ensure single-evaluation semantics (evaluate RHS once, assign, use value)
    - **CRITICAL**: Handle ALL contexts that can host assignment: if/while tests, logical expressions, ternaries, call args, return values
    - Verify `@kriss-u/py-ast` supports walrus operator (NamedExpr node)
@@ -121,7 +121,10 @@ Before implementing, ensure these key semantic issues are addressed:
 27. **Array and Object library methods**: Most array/object methods are **out of scope**.
    - **IN SCOPE (minimal real-world support)**: `push`, `pop` (extremely common, low complexity)
      - `arr.push(x)` → `arr.append(x)` (single arg only; multi-arg push is out of scope)
-     - `arr.pop()` → `arr.pop()`
+     - `arr.pop()` → `js_array_pop(arr)` runtime wrapper (returns `JSUndefined` for empty arrays, not error)
+     - **Detection policy**: Only rewrite when receiver is provably an array (array literal or tracked variable)
+     - Ambiguous receivers (e.g., function parameters of unknown type) → error with code `E_ARRAY_METHOD_AMBIGUOUS`
+     - Multi-arg push → error with code `E_ARRAY_PUSH_MULTI_ARG`
    - Out of scope: `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc.
    - Out of scope: `Object.keys`, `Object.values`, `Object.assign`, etc.
    - Error with code `E_ARRAY_METHOD_UNSUPPORTED` or `E_OBJECT_METHOD_UNSUPPORTED`
@@ -133,11 +136,16 @@ Before implementing, ensure these key semantic issues are addressed:
    - Map `str.replace(regex, repl)`:
      - **Without 'g' flag**: `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
      - **With 'g' flag**: `regex.sub(repl, str, count=0)` (unlimited replacements, global)
+       - **CRITICAL**: `count=0` means "unlimited replacements" in Python (NOT "zero replacements")
+       - **CRITICAL**: The compiled regex does NOT encode 'g'; 'g' only controls the `count` parameter
+       - `compile_js_regex()` strips 'g' before compilation (Python re has no global flag)
      - **SPECIAL CASE**: Allow 'g' flag ONLY for `String.prototype.replace` (common real-world pattern)
-     - Error on 'g' flag elsewhere (regex literals not used in replace context)
+     - **Context validation**: Only inline regex literals with 'g' allowed; stored variables with 'g' → ERROR
+     - Error on 'g' flag in other contexts (`.test()`, variable storage, etc.)
    - Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope (or add minimal helpers)
    - Add explicit tests for `.test()` and `replace()` with regex argument
-   - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace)
+   - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace, count=0)
+   - Add test: `var r = /a/g; 'aaa'.replace(r, 'b')` → ERROR (stored variable with 'g' not allowed)
 
 29. **Identifier sanitization for Python keywords**: Real-world code uses identifiers that collide with Python keywords/builtins.
    - **CRITICAL**: Sanitize identifiers that collide with Python reserved words or literals
@@ -304,14 +312,19 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Transform `==` and `!=` → `js_loose_eq()` and `js_loose_neq()` calls (add to runtime in Phase 4)
 - [ ] ❌ Transform `LogicalExpression` (`&&`, `||`) → **return original operand values** (not booleans)
   - **CRITICAL**: JS returns the actual operand, not a coerced boolean
-  - **Pattern using walrus operator**:
-    - `a && b` → `(b if js_truthy(_temp := a) else _temp)` using walrus operator
-    - `a || b` → `(_temp if js_truthy(_temp := a) else b)` using walrus operator
-  - Create temp allocator in transformer state for unique temp names (prefix: `_temp1`, `_temp2`, etc. to avoid user code collisions)
-  - Single-eval semantics: Evaluate left operand once, store in temp (important for side effects)
-  - **Nested logicals**: Require a temp per short-circuit boundary to ensure single-eval across nesting
-    - Example: `a && b && c` → two temps (one for `a`, one for `a && b`)
-  - Test to ensure operand identity preservation
+  - **Walrus-based transformation using Python NamedExpr**:
+    - `a && b` → `(b if js_truthy(__js_tmp1 := a) else __js_tmp1)`
+    - `a || b` → `(__js_tmp1 if js_truthy(__js_tmp1 := a) else b)`
+    - Python AST: Use `NamedExpr(target=Name(__js_tmp1), value=a)` for walrus operator
+  - **Single-evaluation guarantee**: Left operand evaluated exactly once via walrus assignment
+    - Walrus captures operand value in temp before truthiness check
+    - Both branches of conditional expression use the same temp (no re-evaluation)
+    - Side effects (function calls, mutations) happen exactly once
+  - Create temp allocator in transformer state for unique temp names (prefix: `__js_tmp1`, `__js_tmp2`, etc.)
+  - **Nested logicals**: Require a temp per short-circuit boundary
+    - Example: `a && b && c` → temp for `a`, separate temp for `a && b` result
+    - Pattern: `((__js_tmp2 if js_truthy(__js_tmp2 := (b if js_truthy(__js_tmp1 := a) else __js_tmp1)) else __js_tmp2) if js_truthy(...) else c)`
+  - Test to ensure operand identity preservation (not coerced to boolean)
 - [ ] ❌ Transform `UnaryExpression`:
   - `!` → `not js_truthy(...)`
   - `-` (unary minus) → direct for numbers, or use `js_negate()` for coercion
@@ -353,16 +366,25 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Transform `VariableDeclarator` with initializer → Python `Assign`
 - [ ] ❌ Transform `AssignmentExpression`:
   - **CRITICAL**: Handle assignment used as expression (see Critical Correctness #20)
-    - **Pattern using walrus operator**:
+  - **Walrus-based transformation using Python NamedExpr**:
     - `if (x = y)` → `if js_truthy(x := y): ...`
     - `while (x = y)` → `while js_truthy(x := y): ...`
-    - `a && (x = y)` → `(_temp if js_truthy(_temp := a) else (x := y))` (walrus in both branches)
-    - Call args, return values, ternaries: Use walrus operator directly
-    - Ensure single-evaluation (evaluate RHS once, assign, use value)
-  - `=` → `Assign`
-  - `+=` → **CRITICAL**: Use `js_add(lhs, rhs)` (handles string concat + numeric addition)
-  - `-=`, `*=`, `/=`, `%=` → **Numeric-only** (demo decision); error on type mismatch with code `E_NUM_AUGMENT_COERCION`
-  - Transform to: `lhs = js_add(lhs, rhs)` (not Python AugAssign which has different semantics)
+    - `a && (x = y)` → `((x := y) if js_truthy(__js_tmp1 := a) else __js_tmp1)`
+      - Walrus in truthy branch only; false branch returns temp from `a` evaluation
+    - `a || (x = y)` → `(__js_tmp1 if js_truthy(__js_tmp1 := a) else (x := y))`
+      - Walrus in falsy branch only; true branch returns temp from `a` evaluation
+    - Call args: `f(x = y)` → `f(x := y)` (walrus directly in arg position)
+    - Return values: `return (x = y);` → `return (x := y)` (walrus in return expression)
+    - Ternary test: `(x = y) ? a : b` → `(a if js_truthy(x := y) else b)` (walrus in test)
+    - Python AST: Use `NamedExpr(target=Name(x), value=y)` for walrus operator
+  - **Single-evaluation guarantee**: RHS evaluated exactly once, value assigned and returned
+    - Walrus operator evaluates RHS, assigns to target, returns assigned value
+    - No temporary needed for simple assignment (walrus handles it)
+  - **Assignment operators**:
+    - `=` → `Assign` (or walrus `NamedExpr` in expression context)
+    - `+=` → **CRITICAL**: Use `js_add(lhs, rhs)` (handles string concat + numeric addition)
+      - Transform to: `lhs = js_add(lhs, rhs)` (not Python AugAssign)
+    - `-=`, `*=`, `/=`, `%=` → **Numeric-only** (demo decision); error on type mismatch with code `E_NUM_AUGMENT_COERCION`
 - [ ] ❌ **Single-evaluation for member targets** (see Critical Correctness #21, #23):
   - For `MemberExpression` target: Capture base and key in temps before read/compute/write
   - Pattern: `_base := base_expr`, `_key := key_expr`, read `_base[_key]`, compute, write `_base[_key] = result`
@@ -376,17 +398,19 @@ Before implementing, ensure these key semantic issues are addressed:
 
 **Test:** `var x = 5; x += '3';` → `x = js_add(x, '3')` → `'53'` (string concatenation)
 
-**Test (assignment in condition):** `if (x = f()) { ... }` → `if js_truthy(x := f()): ...` (walrus pattern)
+**Test (assignment in condition):** `if (x = f()) { ... }` → `if js_truthy(x := f()): ...` (NamedExpr walrus; single-eval of f())
 
-**Test (assignment in while):** `while (x = next()) { ... }` → `while js_truthy(x := next()): ...` (walrus pattern)
+**Test (assignment in while):** `while (x = next()) { ... }` → `while js_truthy(x := next()): ...` (NamedExpr walrus; single-eval of next())
 
-**Test (assignment in logical):** `a && (x = y)` → `(_temp if js_truthy(_temp := a) else (x := y))` (walrus pattern)
+**Test (assignment in logical AND):** `a && (x = y)` → `((x := y) if js_truthy(__js_tmp1 := a) else __js_tmp1)` (walrus in truthy branch; single-eval of `a`)
 
-**Test (assignment in ternary):** `(x = y) ? a : b` → `(a if js_truthy(x := y) else b)` (walrus pattern)
+**Test (assignment in logical OR):** `a || (x = y)` → `(__js_tmp1 if js_truthy(__js_tmp1 := a) else (x := y))` (walrus in falsy branch; single-eval of `a`)
 
-**Test (assignment in call arg):** `f(x = y)` → `f(x := y)` (walrus pattern)
+**Test (assignment in ternary):** `(x = y) ? a : b` → `(a if js_truthy(x := y) else b)` (NamedExpr walrus in test position)
 
-**Test (assignment in return):** `return (x = y);` → `return (x := y)` (walrus pattern)
+**Test (assignment in call arg):** `f(x = y)` → `f(x := y)` (NamedExpr walrus directly in argument)
+
+**Test (assignment in return):** `return (x = y);` → `return (x := y)` (NamedExpr walrus in return expression)
 
 **Test (member augassign single-eval):** `getObj().prop += f()` → `_base = getObj(); _base['prop'] = js_add(_base['prop'], f())` (evaluates `getObj()` once)
 
@@ -754,10 +778,16 @@ switch (x) {
   - **SPECIAL CASE**: Allow 'g' flag ONLY for `String.prototype.replace` (common real-world pattern)
   - **Without 'g' flag**: `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
   - **With 'g' flag**: `str.replace(regex_with_g, repl)` → `regex.sub(repl, str, count=0)` (unlimited replacements, global)
-  - Ensure `regex` is a compiled regex object
-  - Detect 'g' flag by inspecting original regex literal node flags
-  - Add test: `'hello world'.replace(/o/, 'O')` → `'hellO world'` (first occurrence only)
-  - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace)
+    - **CRITICAL**: `count=0` in Python `.sub()` means "unlimited replacements" (NOT "zero replacements")
+    - Python docs: count=0 is the default, meaning replace all occurrences
+    - The compiled regex does NOT encode 'g'; the 'g' flag only controls the `count` parameter value
+  - Ensure `regex` is a compiled regex object from `compile_js_regex()` (which strips 'g' before compilation)
+  - Detect 'g' flag by inspecting original regex literal node flags during AST transformation
+  - **Context validation**: ONLY allow 'g' when regex is an inline literal in replace call
+    - `'aaa'.replace(/a/g, 'b')` → ALLOWED (inline literal)
+    - `var r = /a/g; 'aaa'.replace(r, 'b')` → ERROR (stored variable with 'g' not allowed)
+  - Add test: `'hello world'.replace(/o/, 'O')` → `'hellO world'` (first occurrence only, count=1)
+  - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace, count=0)
 - [ ] ❌ Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope
   - Error with code `E_REGEX_METHOD_UNSUPPORTED`
   - Message: "Regex method 'match/exec' is not supported. Use .test() for boolean checks or Python re module directly."
@@ -801,19 +831,27 @@ switch (x) {
 
 ### 3.7 Minimal Array Methods
 - [ ] ❌ Map `arr.push(x)` → `arr.append(x)` (single argument only)
-  - Detect `.push()` method call on array-like expressions
+  - **Detection policy** (avoid false positives on dict methods):
+    - ONLY rewrite when receiver is provably an array:
+      - Array literal: `[].push(x)`, `[1, 2, 3].push(x)`
+      - Variable initialized from ArrayExpression: `var arr = []; arr.push(x);`
+      - Track array-typed variables through static analysis (basic flow)
+    - Otherwise: Error with code `E_ARRAY_METHOD_AMBIGUOUS` and message "Cannot determine if receiver is array or object. Assign to variable initialized from array literal first."
   - Single argument: Direct mapping to `append()`
-  - Multiple arguments: Error with code `E_ARRAY_METHOD_UNSUPPORTED` and message "Array.push() with multiple arguments not supported. Use multiple .push() calls or explicit indexing."
-- [ ] ❌ Map `arr.pop()` → `arr.pop()`
-  - Direct mapping (Python list pop matches JS array pop semantics)
-  - Returns last element and removes it; returns `JSUndefined` if empty (add runtime wrapper for undefined on empty)
+  - Multiple arguments: Error with code `E_ARRAY_PUSH_MULTI_ARG` and message "Array.push() with multiple arguments not supported. Use multiple .push() calls or explicit indexing."
+- [ ] ❌ Map `arr.pop()` → `js_array_pop(arr)` (always use runtime wrapper)
+  - **Detection policy**: Same as push (provably array receiver only)
   - Implement `js_array_pop(arr)` runtime helper: returns `arr.pop()` if non-empty, else `JSUndefined`
+  - **CRITICAL**: Always use wrapper (never direct `arr.pop()`) to handle empty array case correctly
 - [ ] ❌ Add `from js_compat import js_array_pop` via import manager
 
 **Test:** `var arr = [1, 2]; arr.push(3);` → `arr.append(3)` → `[1, 2, 3]`
 **Test:** `var arr = [1, 2, 3]; var x = arr.pop();` → `x = js_array_pop(arr)` → `x = 3`, `arr = [1, 2]`
-**Test:** `var arr = []; var x = arr.pop();` → `x = JSUndefined`
-**Test:** `arr.push(1, 2, 3)` → error: "Array.push() with multiple arguments not supported."
+**Test:** `var arr = []; var x = arr.pop();` → `x = js_array_pop(arr)` → `x = JSUndefined` (wrapper handles empty case)
+**Test:** `arr.push(1, 2, 3)` → error with code `E_ARRAY_PUSH_MULTI_ARG`: "Array.push() with multiple arguments not supported."
+**Test (ambiguous receiver):** `function f(obj) { obj.push(1); }` → error with code `E_ARRAY_METHOD_AMBIGUOUS`: "Cannot determine if receiver is array or object."
+**Test (array literal receiver):** `[1, 2].push(3)` → `[1, 2].append(3)` (provably array)
+**Test (tracked array variable):** `var arr = []; var x = arr; x.push(1);` → `x.append(1)` (tracked through assignment)
 
 ---
 
@@ -1070,10 +1108,14 @@ switch (x) {
 ### 4.9 Regex Literals (with 'g' flag support for String.replace)
 - [ ] ❌ Implement `compile_js_regex(pattern, flags_str)` in runtime:
   - Map JS flags using aliased import: `i` → `_js_re.IGNORECASE`, `m` → `_js_re.MULTILINE`, `s` → `_js_re.DOTALL`
+  - **CRITICAL**: 'g' flag is NOT a compilation flag
+    - **NEVER** pass 'g' to `_js_re.compile()` (Python re doesn't have a global flag)
+    - Strip 'g' from flags_str before compilation: `flags_str.replace('g', '')`
+    - 'g' is a **usage context** flag that controls `.sub()` behavior (not regex compilation)
   - **SPECIAL CASE**: Allow 'g' flag ONLY when regex is used in `String.prototype.replace` context
-    - Track regex usage context during transformation
-    - If regex with 'g' is used in replace: compile WITHOUT 'g' flag (Python re doesn't use flags for global matching; use `count=0` in `.sub()`)
-    - If regex with 'g' is used elsewhere: error with message "Regex global flag 'g' is only supported in String.prototype.replace. Use Python's re.findall() for other cases."
+    - Track regex usage context during transformation (AST parent node analysis)
+    - If regex with 'g' is used in replace: compile WITHOUT 'g', then use `count=0` in `.sub()` call
+    - If regex with 'g' is used elsewhere (`.test()`, stored in variable, etc.): error with message "Regex global flag 'g' is only supported in String.prototype.replace. Use Python's re.findall() or re.finditer() for other cases."
   - Error on unsupported flags (`y`, `u`) with clear message
   - Document: 'y' (sticky) and 'u' (unicode) flags not directly supported
   - **Ensure backslash escaping**: Pattern string must preserve backslashes (e.g., `\d`, `\w`, `\s`)
@@ -1081,26 +1123,40 @@ switch (x) {
     - This prevents double-escaping pitfalls
     - If pattern contains both ' and ", choose quote style or escape appropriately
   - **CRITICAL**: Test escaped backslashes and raw vs cooked strings in final Python string literal
-  - Return `_js_re.compile(pattern, flags)` (using aliased import)
+  - Return `_js_re.compile(pattern, flags)` (using aliased import, with 'g' already stripped)
 - [ ] ❌ Add `import re as _js_re` via import manager
-- [ ] ❌ Transform regex `Literal` → `compile_js_regex(pattern, flags)`
+- [ ] ❌ Transform regex `Literal` → `compile_js_regex(pattern, flags_without_g)`
   - Access pattern via `node.regex.pattern` (Acorn structure)
   - Access flags via `node.regex.flags` (Acorn structure)
-  - Track context to determine if 'g' flag is allowed
+  - **Check for 'g' flag**: If present, validate usage context
+  - Track whether regex has 'g' flag separately (for later `.sub()` count determination)
+  - Pass flags to `compile_js_regex()` (runtime will strip 'g' before compilation)
 
-**Test:** `/hello/i` → `compile_js_regex('hello', 'i')` → case-insensitive regex
+**Test:** `/hello/i` → `compile_js_regex('hello', 'i')` → case-insensitive regex (no 'g', compiles normally)
 
-**Test:** `/\d+/` → pattern preserves backslash correctly
+**Test:** `/\d+/` → `compile_js_regex('\\d+', '')` → pattern preserves backslash correctly in raw string
 
-**Test:** `/[a-z]+/i` → character class works
+**Test:** `/[a-z]+/i` → `compile_js_regex('[a-z]+', 'i')` → character class works
 
-**Test:** `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace allowed in String.replace context)
+**Test (allowed 'g' context):** `'aaa'.replace(/a/g, 'b')`
+  → Transformation: `_regex = compile_js_regex('a', 'g')` (runtime strips 'g'), then `_regex.sub('b', 'aaa', count=0)`
+  → Result: `'bbb'` (count=0 means unlimited replacements, global behavior)
 
-**Test:** `/test/g.test('test')` → error "Regex global flag 'g' is only supported in String.prototype.replace."
+**Test (rejected 'g' context - test method):** `/test/g.test('test')`
+  → Error: "Regex global flag 'g' is only supported in String.prototype.replace. Use Python's re.findall() or re.finditer() for other cases."
+
+**Test (rejected 'g' context - variable storage):** `var regex = /a/g; 'aaa'.replace(regex, 'b')`
+  → Error: "Regex global flag 'g' is only supported in String.prototype.replace. Inline the regex literal in the replace call."
+
+**Test (rejected 'g' context - array literal):** `var patterns = [/a/g, /b/];`
+  → Error: "Regex global flag 'g' is only supported in String.prototype.replace."
 
 **Test:** `/test/y` → error "Regex sticky flag 'y' is not supported."
 
 **Test:** `/test/u` → error "Regex unicode flag 'u' is not supported."
+
+**Test (count=0 clarification):** Verify Python `regex.sub(repl, str, count=0)` means "unlimited replacements" (not "zero replacements")
+  → Python docs: count=0 is default, means replace all occurrences
 
 ---
 
@@ -1226,6 +1282,16 @@ switch (x) {
   }
   ```
 - [ ] ❌ **Member-target single-eval under augassign**: `obj()[key()] += f()` → evaluate `obj()` and `key()` exactly once
+- [ ] ❌ **Regex 'g' flag validation (comprehensive)**:
+  - **ALLOWED context**: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (inline literal in replace call)
+  - **Verify count=0**: Confirm Python `regex.sub(repl, str, count=0)` produces unlimited replacements
+  - **Verify 'g' stripped**: Confirm `compile_js_regex('a', 'g')` compiles WITHOUT 'g' flag (Python re has no global flag)
+  - **REJECTED context - test method**: `/test/g.test('test')` → error `E_REGEX_GLOBAL_CONTEXT`
+  - **REJECTED context - variable storage**: `var r = /a/g; 'aaa'.replace(r, 'b')` → error `E_REGEX_GLOBAL_CONTEXT`
+  - **REJECTED context - array literal**: `var patterns = [/a/g];` → error `E_REGEX_GLOBAL_CONTEXT`
+  - **REJECTED context - object literal**: `var obj = {pattern: /a/g};` → error `E_REGEX_GLOBAL_CONTEXT`
+  - **REJECTED context - function arg**: `function f(r) { 'aaa'.replace(r, 'b'); } f(/a/g);` → error at regex literal site
+  - Error message: "Regex global flag 'g' is only supported in String.prototype.replace with inline literals. Use Python's re.findall() or re.finditer() for other cases."
 - [ ] ❌ **Member-target single-eval under update**: `obj[key++]++` → evaluate `obj` and `key++` exactly once
 - [ ] ❌ **Regex escaping**: `\d` patterns preserved exactly, quotes chosen to avoid extra escaping
 - [ ] ❌ **Mixed equality in switch**: Cases with NaN, -0/+0, object literals (identity), primitives
@@ -1274,14 +1340,17 @@ switch (x) {
 - [ ] ❌ Test: Bitwise operators (`|`, `&`, `^`, `~`, `<<`, `>>`, `>>>`) → error with code `E_BITWISE_UNSUPPORTED`
   - Message: "Bitwise operators are not supported. Use Math.floor() to truncate or arithmetic equivalents."
   - Test each bitwise operator
-- [ ] ❌ Test: Array methods (`push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`) → error with code `E_ARRAY_METHOD_UNSUPPORTED`
+- [ ] ❌ Test: Array methods (`shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc.) → error with code `E_ARRAY_METHOD_UNSUPPORTED`
   - Message: "Array method 'X' is not supported. Use explicit loops or supported alternatives."
+  - Note: `push` (single arg) and `pop` ARE supported (see Phase 3.7); this test is for OTHER array methods
 - [ ] ❌ Test: Object methods (`Object.keys`, `Object.values`, `Object.assign`) → error with code `E_OBJECT_METHOD_UNSUPPORTED`
   - Message: "Object method 'X' is not supported. Use explicit loops or manual property access."
 - [ ] ❌ Test: Regex methods (`match`, `exec`) → error with code `E_REGEX_METHOD_UNSUPPORTED`
   - Message: "Regex method 'match/exec' is not supported. Use .test() for boolean checks."
-- [ ] ❌ Test: SequenceExpression limited to for-init/update; error in other contexts with `E_SEQUENCE_EXPR_CONTEXT`
-  - `(a(), b()) ? x : y` → error `E_SEQUENCE_EXPR_CONTEXT` (not supported outside for-init/update)
+- [ ] ❌ Test: SequenceExpression outside for-init/update → error with code `E_SEQUENCE_EXPR_CONTEXT`
+  - `(a(), b()) ? x : y` → error: "SequenceExpression (comma operator) is only supported in for-loop init/update clauses."
+  - `var x = (1, 2, 3);` → error (not in for-init/update)
+  - `return (f(), g());` → error (not in for-init/update)
 
 ---
 
@@ -1357,11 +1426,14 @@ switch (x) {
   - `E_LENGTH_ASSIGN`: Assignment to array `.length` property
   - `E_NUM_AUGMENT_COERCION`: Augmented assignment requires numeric operands
   - `E_BITWISE_UNSUPPORTED`: Bitwise operators not supported
-  - `E_ARRAY_METHOD_UNSUPPORTED`: Array method not supported
+  - `E_ARRAY_METHOD_UNSUPPORTED`: Array method not supported (excludes `push` single-arg and `pop` which ARE supported)
+  - `E_ARRAY_METHOD_AMBIGUOUS`: Cannot determine if receiver is array or object for push/pop
+  - `E_ARRAY_PUSH_MULTI_ARG`: Array.push() with multiple arguments not supported
   - `E_OBJECT_METHOD_UNSUPPORTED`: Object method not supported
   - `E_REGEX_METHOD_UNSUPPORTED`: Regex method not supported
+  - `E_REGEX_GLOBAL_CONTEXT`: Regex 'g' flag used in unsupported context (only allowed in String.prototype.replace with inline literals)
   - `E_LOOSE_EQ_OBJECT`: Loose equality with objects/arrays not supported
-  - `E_SEQUENCE_EXPR_CONTEXT`: SequenceExpression in unsupported context
+  - `E_SEQUENCE_EXPR_CONTEXT`: SequenceExpression outside for-init/update (only supported in for-loop init/update clauses)
   - `E_IN_OPERATOR_UNSUPPORTED`: 'in' operator not supported
   - `E_UNRESOLVED_IDENTIFIER`: Undeclared identifier
   - `E_INSTANCEOF_UNSUPPORTED`: 'instanceof' operator not supported
@@ -1472,7 +1544,7 @@ switch (x) {
 - **Return semantics**: Bare `return;` → `return JSUndefined` (NOT Python's implicit `None`)
 - **SequenceExpression**: Limited to for-init/update contexts (most common use case)
 - **Assignment-in-expression**: Walrus operator (`:=`) for all contexts
-- **Logical operators**: Walrus operator pattern: `a && b` → `(b if js_truthy(_temp := a) else _temp)`
+- **Logical operators**: Walrus operator (NamedExpr) for single-eval: `a && b` → `(b if js_truthy(__js_tmp1 := a) else __js_tmp1)`
 - **Strict equality**: Use `js_strict_eq()` for ALL `===` (including switch); identity for objects, value for primitives; -0 vs +0 not distinguished
 - **Augmented assignment**: `+=` uses `js_add()` (string concat + numeric); `-=`/`*=`/`/=`/`%=` numeric-only (error on type mismatch)
 - **Loose equality**: Primitives + null/undefined only; error on objects/arrays (ToPrimitive complexity)
