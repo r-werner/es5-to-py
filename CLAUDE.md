@@ -43,7 +43,7 @@ These are the most critical correctness requirements that are easy to violate. *
 ### 4. **Walrus Operator Strategy (Python ≥ 3.8 Required)**
 - Assignment in expression context uses walrus operator: `if (x = y)` → `if js_truthy(x := y)`
 - Logical operators use walrus for single-eval: `a && b` → `(b if js_truthy(_temp := a) else _temp)`
-- SequenceExpression supported in all contexts (using walrus operator)
+- **SequenceExpression**: Supported ONLY in for-init/update (e.g., `for(i=0, j=0; ...; i++, j++)`)
 - No fallback mode; Python 3.8+ is mandatory
 
 ### 5. **Member Access Always Uses Subscript**

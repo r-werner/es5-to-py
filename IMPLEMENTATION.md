@@ -81,11 +81,13 @@ Before implementing, ensure these key semantic issues are addressed:
    - Applies to ALL `AssignmentExpression` and `UpdateExpression` with member targets
    - Create "single-eval assignment target" utility in transformer
 
-22. **SequenceExpression scope**: Support in for-init/update contexts (most common use case).
-   - **DECISION**: Limit to for-init/update; general expression-level comma operators are rare in ES5
-   - For-init/update: emit each expression as separate statement
-   - **Defer**: SequenceExpression inside pure expression contexts (nested ternary/call args) → error with code `E_SEQUENCE_EXPR_CONTEXT`
-   - Message: "SequenceExpression in this context is not supported. Refactor to separate statements."
+22. **SequenceExpression scope**: **DECISION FOR DEMO**: Limit to for-init/update contexts only.
+   - Support ONLY in `for(init; test; update)` init and update clauses (most common real-world usage)
+   - Common use case: `for(i=0, j=0; ...; i++, j++)` is fully supported
+   - **Out of scope**: SequenceExpression in other contexts (general expressions, conditionals, return values, assignments)
+   - Error with code `E_SEQUENCE_EXPR_CONTEXT` if found outside for-init/update
+   - Message: "SequenceExpression (comma operator) is only supported in for-loop init/update clauses. Refactor to separate statements."
+   - Rationale: Simplifies implementation; covers 99% of real ES5 code; clear scope boundaries for demo
 
 23. **Augmented assignment policy**: **DECISION FOR DEMO**: Numeric-only. Error on type mismatches.
    - `+=` uses `js_add` (handles string concat + numeric addition)
@@ -302,24 +304,21 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Transform `==` and `!=` → `js_loose_eq()` and `js_loose_neq()` calls (add to runtime in Phase 4)
 - [ ] ❌ Transform `LogicalExpression` (`&&`, `||`) → **return original operand values** (not booleans)
   - **CRITICAL**: JS returns the actual operand, not a coerced boolean
-  - **Default strategy (statement-temp)**:
-    - `a && b` → `__js_tmp1 = a; result = b if js_truthy(__js_tmp1) else __js_tmp1`
-    - `a || b` → `__js_tmp1 = a; result = __js_tmp1 if js_truthy(__js_tmp1) else b`
-  - Alternative (if `--use-walrus`):
+  - **Pattern using walrus operator**:
     - `a && b` → `(b if js_truthy(_temp := a) else _temp)` using walrus operator
     - `a || b` → `(_temp if js_truthy(_temp := a) else b)` using walrus operator
-  - Create temp allocator in transformer state for unique temp names (prefix: `__js_tmp1`, `__js_tmp2`, etc. to avoid user code collisions)
+  - Create temp allocator in transformer state for unique temp names (prefix: `_temp1`, `_temp2`, etc. to avoid user code collisions)
   - Single-eval semantics: Evaluate left operand once, store in temp (important for side effects)
   - **Nested logicals**: Require a temp per short-circuit boundary to ensure single-eval across nesting
     - Example: `a && b && c` → two temps (one for `a`, one for `a && b`)
-  - Test with both statement-temp and walrus modes to ensure operand identity preservation
+  - Test to ensure operand identity preservation
 - [ ] ❌ Transform `UnaryExpression`:
   - `!` → `not js_truthy(...)`
   - `-` (unary minus) → direct for numbers, or use `js_negate()` for coercion
   - `+` (unary plus) → `js_to_number(x)` runtime helper for ToNumber coercion
   - `void` → evaluate operand for side effects, then emit `JSUndefined`
     - Common idiom: `void 0` yields `undefined`
-    - Pattern: `void expr` → `(expr, JSUndefined)[1]` or statement-temp: `expr; result = JSUndefined`
+    - Pattern: `void expr` → evaluate `expr`, then return `JSUndefined`. Use tuple indexing: `(expr, JSUndefined)[1]` or sequence with walrus
     - Ensure operand is evaluated (for side effects like `void f()`)
   - `typeof`, `delete` → defer to Phase 4
 - [ ] ❌ Transform `ConditionalExpression` (ternary) → Python `IfExp` with `js_truthy()` on test
@@ -354,12 +353,11 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Transform `VariableDeclarator` with initializer → Python `Assign`
 - [ ] ❌ Transform `AssignmentExpression`:
   - **CRITICAL**: Handle assignment used as expression (see Critical Correctness #20)
-    - **Default strategy**: Statement-temp lifting (works on Python 3.7+)
-    - `if (x = y)` → lift to statement: `x = y; if js_truthy(x): ...`
-    - `while (x = y)` → `x = y; while js_truthy(x): ... x = y` (re-evaluate in loop)
-    - `a && (x = y)` → lift assignment before logical expression
-    - Call args, return values, etc.: Lift to statement before usage
-    - Alternative (if `--use-walrus`): Use walrus operator `(_temp := expr)` pattern
+    - **Pattern using walrus operator**:
+    - `if (x = y)` → `if js_truthy(x := y): ...`
+    - `while (x = y)` → `while js_truthy(x := y): ...`
+    - `a && (x = y)` → `(_temp if js_truthy(_temp := a) else (x := y))` (walrus in both branches)
+    - Call args, return values, ternaries: Use walrus operator directly
     - Ensure single-evaluation (evaluate RHS once, assign, use value)
   - `=` → `Assign`
   - `+=` → **CRITICAL**: Use `js_add(lhs, rhs)` (handles string concat + numeric addition)
@@ -378,17 +376,17 @@ Before implementing, ensure these key semantic issues are addressed:
 
 **Test:** `var x = 5; x += '3';` → `x = js_add(x, '3')` → `'53'` (string concatenation)
 
-**Test (assignment in condition):** `if (x = f()) { ... }` → `x = f(); if js_truthy(x): ...` (statement-temp pattern)
+**Test (assignment in condition):** `if (x = f()) { ... }` → `if js_truthy(x := f()): ...` (walrus pattern)
 
-**Test (assignment in while):** `while (x = next()) { ... }` → `x = next(); while js_truthy(x): ... x = next()` (re-evaluate)
+**Test (assignment in while):** `while (x = next()) { ... }` → `while js_truthy(x := next()): ...` (walrus pattern)
 
-**Test (assignment in logical):** `a && (x = y)` → lift assignment before logical
+**Test (assignment in logical):** `a && (x = y)` → `(_temp if js_truthy(_temp := a) else (x := y))` (walrus pattern)
 
-**Test (assignment in ternary):** `(x = y) ? a : b` → lift assignment before ternary
+**Test (assignment in ternary):** `(x = y) ? a : b` → `(a if js_truthy(x := y) else b)` (walrus pattern)
 
-**Test (assignment in call arg):** `f(x = y)` → `x = y; f(x)` (lift before call)
+**Test (assignment in call arg):** `f(x = y)` → `f(x := y)` (walrus pattern)
 
-**Test (assignment in return):** `return (x = y);` → `x = y; return x;` (lift before return)
+**Test (assignment in return):** `return (x = y);` → `return (x := y)` (walrus pattern)
 
 **Test (member augassign single-eval):** `getObj().prop += f()` → `_base = getObj(); _base['prop'] = js_add(_base['prop'], f())` (evaluates `getObj()` once)
 
@@ -459,27 +457,24 @@ Before implementing, ensure these key semantic issues are addressed:
 ---
 
 ### 1.8 SequenceExpression (Comma Operator)
-- [ ] ❌ Transform `SequenceExpression` → evaluate expressions left-to-right, return last value
-  - **SCOPE DECISION FOR DEMO**: Limit to for-init/update contexts (most common use case)
+- [ ] ❌ Transform `SequenceExpression` in for-init/update contexts ONLY
+  - **SCOPE DECISION FOR DEMO**: Support ONLY in `for(init; test; update)` init and update clauses
   - **CRITICAL**: Required for for-loops: `for(i=0, j=0; ...; i++, j++)`
-  - **Optional**: Support in statement contexts where lifting to multiple statements is legal
-  - **Defer/Error**: SequenceExpression inside pure expression contexts (nested boolean/logical/ternary) unless using walrus
-    - If statement-temp mode and SequenceExpression appears in illegal lifting context → error with code `E_SEQUENCE_EXPR_CONTEXT`
-    - Message: "SequenceExpression in this context requires --use-walrus mode or refactoring to separate statements."
   - Acorn produces `SequenceExpression` with `expressions` array
-  - For for-init/update: Emit each expression as separate statement
-  - For statement contexts: Emit statement for each expression except last; return last expression value
-  - Create transformer utility to "evaluate list left-to-right and return last node"
-  - Cover side-effect cases explicitly
-  - Document limits explicitly in "Known Limitations"
+  - Implementation: Emit each expression as separate statement in for-init/update transformation
+  - **Out of scope**: SequenceExpression in all other contexts (general expressions, conditionals, return values, assignments, call arguments)
+  - Add context tracking: Mark when transformer is inside for-init or for-update
+  - Error with code `E_SEQUENCE_EXPR_CONTEXT` if `SequenceExpression` found outside for-init/update
+  - Message: "SequenceExpression (comma operator) is only supported in for-loop init/update clauses. Refactor to separate statements."
+  - Rationale: Covers 99% of real ES5 usage; simplifies implementation; clear scope boundaries
 
 **Test:** `for (var i = 0, j = 0; i < 3; i++, j++) { ... }` → init and update both use SequenceExpression (supported)
 
-**Test:** `var x; x = (a(), b(), c());` → statement context; emit `a(); b(); x = c();` (supported if in statement position)
+**Test (error):** `var x = (a(), b(), c());` → error `E_SEQUENCE_EXPR_CONTEXT`: "SequenceExpression is only supported in for-loop init/update"
 
-**Test (deferred/error):** `(f(), g(), h()) ? a : b` → error in statement-temp mode: "SequenceExpression in conditional test requires --use-walrus mode"
+**Test (error):** `if ((a(), b())) { ... }` → error `E_SEQUENCE_EXPR_CONTEXT`
 
-**Test (deferred/error):** `var x = (1, 2, 3);` → error or support via statement lifting depending on context legality
+**Test (error):** `return (a(), b());` → error `E_SEQUENCE_EXPR_CONTEXT`
 
 ---
 
@@ -1184,7 +1179,8 @@ switch (x) {
 - [ ] ❌ Test -0 vs +0: `-0 === +0` → `True` (if -0 distinction skipped)
 - [ ] ❌ Test global identifiers: `NaN`, `Infinity`, `undefined` in expressions, equality, typeof
 - [ ] ❌ Test bare return: `function f() { return; }`, verify `f() === undefined`
-- [ ] ❌ Test SequenceExpression: `(1, 2, 3)` → `3`, in for-init and for-update
+- [ ] ❌ Test SequenceExpression: `for(var i=0, j=0; ...; i++, j++)` → supported in for-init and for-update only
+- [ ] ❌ Test SequenceExpression error: `(1, 2, 3)` in non-for context → error `E_SEQUENCE_EXPR_CONTEXT`
 - [ ] ❌ Test `+=` on strings/numbers: `5 + '3'` → `'53'`, `'hello' + ' world'` → `'hello world'`
 - [ ] ❌ Test arithmetic coercion: `'5' - 2` → `3`, `+'5'` → `5`, `null + 1` → `1`
 - [ ] ❌ Test division by zero: `1/0` → `Infinity`, `-1/0` → `-Infinity`
@@ -1284,8 +1280,8 @@ switch (x) {
   - Message: "Object method 'X' is not supported. Use explicit loops or manual property access."
 - [ ] ❌ Test: Regex methods (`match`, `exec`) → error with code `E_REGEX_METHOD_UNSUPPORTED`
   - Message: "Regex method 'match/exec' is not supported. Use .test() for boolean checks."
-- [ ] ❌ Test: SequenceExpression in illegal context (if statement-temp mode) → error with code `E_SEQUENCE_EXPR_CONTEXT`
-  - `(a(), b()) ? x : y` → error in statement-temp mode
+- [ ] ❌ Test: SequenceExpression limited to for-init/update; error in other contexts with `E_SEQUENCE_EXPR_CONTEXT`
+  - `(a(), b()) ? x : y` → error `E_SEQUENCE_EXPR_CONTEXT` (not supported outside for-init/update)
 
 ---
 
@@ -1340,8 +1336,9 @@ switch (x) {
 ### 5.7 Documentation
 - [ ] ❌ Update README.md with usage instructions, examples, supported subset
 - [ ] ❌ **Document Python version requirement: Python ≥ 3.8 REQUIRED**
-  - Walrus operator used for logical expressions and assignment-in-expression contexts
-  - No fallback to Python 3.7 (simplifies implementation)
+  - Walrus operator (`:=`) used for logical expressions and assignment-in-expression contexts
+  - SequenceExpression limited to for-init/update only (not general expression contexts)
+  - No fallback mode; Python 3.8+ is mandatory
   - Add to README: "Requires Python ≥ 3.8"
 - [ ] ❌ **Pin versions**: Document Node.js version (e.g., Node 18 LTS) and Python version (≥ 3.8) for CI and execution parity tests
 - [ ] ❌ Document runtime library API with exact function signatures and behavior
@@ -1353,7 +1350,6 @@ switch (x) {
   - `Array.prototype.map(fn)` → explicit for-loop
   - `Array.prototype.filter(fn)` → explicit for-loop with conditional append
   - Loose equality `==` with objects → use strict equality `===` or explicit comparison
-  - Comma expressions in non-for contexts → separate statements or use `--use-walrus`
   - `RegExp(pattern, flags)` constructor → regex literals `/pattern/flags`
 - [ ] ❌ **Document error codes**: Create table mapping error codes to messages
   - `E_UNSUPPORTED_FEATURE`: Feature outside ES5 subset (e.g., `let`, `const`, `class`)
@@ -1381,7 +1377,7 @@ switch (x) {
 - [ ] ❌ Document known limitations:
   - **Python ≥ 3.8 required** (walrus operator `:=` is mandatory; no fallback mode)
   - **Return semantics**: `return;` (bare return) yields `undefined`, not `null`
-  - **SequenceExpression**: Comma operator `(a, b, c)` supported in all contexts (using walrus operator)
+  - **SequenceExpression**: Comma operator `(a, b, c)` supported ONLY in for-init/update contexts (e.g., `for(i=0, j=0; ...; i++, j++)`); error `E_SEQUENCE_EXPR_CONTEXT` in other contexts
   - **Strict equality**: -0 vs +0 distinction not implemented (acceptable for demo; `-0 === +0` is `true`)
   - **Augmented assignment**: `+=` uses JS semantics (string concat); `-=`/`*=`/`/=`/`%=` are numeric-only (error on type mismatch)
   - **Math.round**: .5 behavior differs (Python uses banker's rounding; avoid .5 inputs or use js_round shim)
