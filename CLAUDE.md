@@ -9,8 +9,7 @@ This file provides high-level guidance to Claude Code when working with this ES5
 ES5-to-Python transpiler: Converts a defined subset of ES5 JavaScript into executable Python code. This is a technology demo that prioritizes **correctness over performance** and **fails fast** on unsupported constructs.
 
 **Requirements**:
-- Python ≥ 3.7 (default statement-temp mode)
-- Python ≥ 3.8 (for optional `--use-walrus` mode)
+- Python ≥ 3.8 REQUIRED (walrus operator used for logical expressions and assignment-in-expression)
 - Node.js (for acorn parser)
 
 ## Architecture
@@ -61,7 +60,7 @@ These are the **most error-prone** semantic differences between JS and Python. A
 
 3. **Logical operators return operands, not booleans**
    - `'a' && 0` → `0` (not `False`), `0 || 'x'` → `'x'` (not `True`)
-   - Default: statement-temp lifting; optional: walrus operator with `--use-walrus`
+   - Use walrus operator: `a && b` → `(b if js_truthy(_temp := a) else _temp)`
 
 4. **For-loop continue must execute update**
    - `for(init; test; update)` desugars to while loop
@@ -75,9 +74,8 @@ These are the **most error-prone** semantic differences between JS and Python. A
    - Case matching uses `js_strict_eq` (not Python `==`)
    - Discriminant evaluated once and cached in temp variable
 
-7. **Assignment in expressions requires lifting**
-   - `if (x = y)` → `x = y; if js_truthy(x): ...` (statement-temp default)
-   - Alternative: walrus operator with `--use-walrus` (Python ≥ 3.8)
+7. **Assignment in expressions uses walrus**
+   - `if (x = y)` → `if js_truthy(x := y): ...` (walrus operator)
 
 **See `IMPLEMENTATION.md` for complete list of 32 critical requirements.**
 
@@ -88,8 +86,8 @@ These are the **most error-prone** semantic differences between JS and Python. A
 - **Control flow desugaring**: For-loops → while loops; switch → `while True` + if/elif/else
 - **Default to subscript**: `obj.prop` → `obj['prop']` (avoids attribute/method shadowing)
 - **Runtime helpers over inline code**: Keep transformer simple, bridge gaps in `js_compat.py`
-- **Statement-temp default**: Lift assignments/sequences to statements (Python 3.7+); walrus is optional
-- **Deterministic imports**: Only import what's used; stdlib first (`math`, `random`, `re`), then `js_compat`
+- **Walrus for expressions**: Use `:=` for logical operators and assignment-in-expression (Python 3.8+)
+- **Deterministic imports**: Only import what's used; stdlib aliased (`_js_math`, `_js_random`, `_js_re`), then `js_compat`
 
 ## Error Handling Philosophy
 
@@ -128,7 +126,7 @@ Example: `"Bitwise OR operator (|) is not supported. Use Math.floor() to truncat
 
 **Import Order**: stdlib first (`import math`, `import random`, `import re`), then `from js_compat import ...`
 
-**CLI Flags**: `--use-walrus`, `--output <file>`, `--run`, `--verbose`
+**CLI Flags**: `--output <file>`, `--run`, `--verbose`
 
 ## Where to Look
 

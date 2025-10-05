@@ -8,7 +8,7 @@
 
 Before implementing, ensure these key semantic issues are addressed:
 
-1. **Python version requirement**: Python ≥ 3.8 required. This simplifies implementation by allowing walrus operator for logical expressions and assignment-in-expression contexts without maintaining two code paths. Statement-temp mode is no longer needed.
+1. **Python version requirement**: Python ≥ 3.8 required. Walrus operator (`:=`) is the single strategy for assignment-in-expression and logical expressions. No fallback mode.
 
 2. **Strict equality for objects/arrays/functions**:
    - **CRITICAL BUG**: Python `==` uses value equality; JS `===` uses identity for objects
@@ -24,7 +24,7 @@ Before implementing, ensure these key semantic issues are addressed:
 
 4. **Return without expression**: `return;` (bare return) must emit `return JSUndefined` (NOT Python's implicit `None`). JS `return;` yields `undefined`, not `null`.
 
-5. **Continue in for-loops**: When desugaring `for(init; test; update)` to while, `continue` must execute update before jumping to test. Only rewrite `continue` in the specific desugared loop's body, NOT inner loops. Use loop ID tagging to track which continues belong to which loop.
+5. **Continue in for-loops**: When desugaring `for(init; test; update)` to while, `continue` must execute update before jumping to test. Only rewrite `continue` in the specific desugared loop's body, NOT inner loops. Use loop ID tagging to track which continues belong to which loop. **CRITICAL**: If update is a SequenceExpression with multiple statements, emit the entire update expression once, in order, before continue.
 
 6. **SequenceExpression (comma operator)**: Support `(a, b, c)` which evaluates left-to-right and returns last value. Common in for-loop init/update: `for(i=0, j=0; ...; i++, j++)`. Ensure single-eval semantics.
 
@@ -37,16 +37,14 @@ Before implementing, ensure these key semantic issues are addressed:
 
 8. **Augmented assignment semantics**:
    - `+=` must use `js_add(lhs, rhs)` (string concatenation if either operand is string)
-   - **Decision required**: For `-=`, `*=`, `/=`, `%=` either:
-     - (a) Numeric-only and error on type mismatches (RECOMMENDED for demo), OR
-     - (b) Full ToNumber coercion with `js_sub`, `js_mul`, `js_div`, `js_mod`
-   - Pick one approach and document in "Known Limitations"
+   - **LOCKED DECISION**: `-=`, `*=`, `/=`, `%=` are **numeric-only**; error with code `E_NUM_AUGMENT_COERCION` on type mismatches
+   - Simplifies runtime and reduces edge-case bugs; full ToNumber coercion not in scope
 
 9. **delete on arrays**: Python `del` shifts elements; JS leaves holes. Assign `JSUndefined` at index instead of deleting.
 
 10. **delete on identifiers**: `delete identifier` returns `false` in JS (non-configurable). **Decision**: Use ERROR (recommended) for clarity. Be consistent in transformer + runtime.
 
-11. **Switch case comparison**: Use strict equality (`js_strict_eq`) for case matching, not loose equality. Add static validation pass to detect non-empty fall-through and error early.
+11. **Switch case comparison**: Use strict equality (`js_strict_eq`) for case matching, not loose equality. Add static validation pass to detect non-empty fall-through and error early. **ENFORCEMENT**: Transform must fail if any `===`/`!==` path escapes without `js_strict_eq`/`js_strict_neq`, including all switch-case codegen.
 
 12. **Strict equality edge cases**: Handle NaN (`NaN !== NaN`). **Decision on -0 vs +0**: JS treats `-0 === +0` as `true`. Document if skipping -0 distinction (acceptable for demo).
 
@@ -61,7 +59,7 @@ Before implementing, ensure these key semantic issues are addressed:
 
 16. **Member access**: Default to subscript `obj['prop']` for ALL property access (read AND write) to avoid attribute shadowing. Exception: `.length` property detection only.
 
-17. **Logical operators**: Preserve original operand values in short-circuit evaluation, not coerced booleans. Ensure single-eval semantics. Python ≥3.8 uses walrus; provide fallback for 3.7 if needed.
+17. **Logical operators**: Preserve original operand values in short-circuit evaluation, not coerced booleans. Use walrus operator (Python 3.8+). Pattern: `a && b` → `(b if js_truthy(_temp := a) else _temp)`. Ensure single-eval semantics.
 
 18. **Break/Continue validation**: Add pre-pass to tag nodes with loop/switch ancestry for better error messages ("continue inside switch", "break outside loop").
 
@@ -118,7 +116,10 @@ Before implementing, ensure these key semantic issues are addressed:
    - Document all global function policies in "Known Limitations" and error message tables
 
 27. **Array and Object library methods**: Most array/object methods are **out of scope**.
-   - Out of scope: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc.
+   - **IN SCOPE (minimal real-world support)**: `push`, `pop` (extremely common, low complexity)
+     - `arr.push(x)` → `arr.append(x)` (single arg only; multi-arg push is out of scope)
+     - `arr.pop()` → `arr.pop()`
+   - Out of scope: `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc.
    - Out of scope: `Object.keys`, `Object.values`, `Object.assign`, etc.
    - Error with code `E_ARRAY_METHOD_UNSUPPORTED` or `E_OBJECT_METHOD_UNSUPPORTED`
    - Message: "Array/Object method 'X' is not supported. Use explicit loops or supported alternatives."
@@ -727,9 +728,13 @@ switch (x) {
   - Assumes `regex` is a compiled regex object from Phase 4
   - Add test for regex literal with `.test()`: `/\d+/.test('123')` → `True`
 - [ ] ❌ Map `str.replace(regex, repl)` with regex argument
-  - Transform `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
+  - **SPECIAL CASE**: Allow 'g' flag ONLY for `String.prototype.replace` (common real-world pattern)
+  - **Without 'g' flag**: `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
+  - **With 'g' flag**: `str.replace(regex_with_g, repl)` → `regex.sub(repl, str, count=0)` (unlimited replacements, global)
   - Ensure `regex` is a compiled regex object
+  - Detect 'g' flag by inspecting original regex literal node flags
   - Add test: `'hello world'.replace(/o/, 'O')` → `'hellO world'` (first occurrence only)
+  - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace)
 - [ ] ❌ Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope
   - Error with code `E_REGEX_METHOD_UNSUPPORTED`
   - Message: "Regex method 'match/exec' is not supported. Use .test() for boolean checks or Python re module directly."
@@ -737,8 +742,8 @@ switch (x) {
 
 **Test:** `/\d+/.test('123')` → `True`
 **Test:** `/\d+/.test('abc')` → `False`
-**Test:** `'hello world'.replace(/o/, 'O')` → `'hellO world'`
-**Test:** `'hello world'.replace(/o/g, 'O')` → error (global flag unsupported, caught earlier)
+**Test:** `'hello world'.replace(/o/, 'O')` → `'hellO world'` (first occurrence)
+**Test:** `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace with 'g' flag)
 
 ---
 
@@ -771,7 +776,25 @@ switch (x) {
 
 ---
 
-### 3.7 Console.log Mapping
+### 3.7 Minimal Array Methods
+- [ ] ❌ Map `arr.push(x)` → `arr.append(x)` (single argument only)
+  - Detect `.push()` method call on array-like expressions
+  - Single argument: Direct mapping to `append()`
+  - Multiple arguments: Error with code `E_ARRAY_METHOD_UNSUPPORTED` and message "Array.push() with multiple arguments not supported. Use multiple .push() calls or explicit indexing."
+- [ ] ❌ Map `arr.pop()` → `arr.pop()`
+  - Direct mapping (Python list pop matches JS array pop semantics)
+  - Returns last element and removes it; returns `JSUndefined` if empty (add runtime wrapper for undefined on empty)
+  - Implement `js_array_pop(arr)` runtime helper: returns `arr.pop()` if non-empty, else `JSUndefined`
+- [ ] ❌ Add `from js_compat import js_array_pop` via import manager
+
+**Test:** `var arr = [1, 2]; arr.push(3);` → `arr.append(3)` → `[1, 2, 3]`
+**Test:** `var arr = [1, 2, 3]; var x = arr.pop();` → `x = js_array_pop(arr)` → `x = 3`, `arr = [1, 2]`
+**Test:** `var arr = []; var x = arr.pop();` → `x = JSUndefined`
+**Test:** `arr.push(1, 2, 3)` → error: "Array.push() with multiple arguments not supported."
+
+---
+
+### 3.8 Console.log Mapping
 - [ ] ❌ Add `console_log(*args)` to runtime library
   - Implement JS-style formatting (space-separated values)
   - This keeps transformer simple and allows future formatting parity
@@ -782,7 +805,7 @@ switch (x) {
 
 ---
 
-### 3.8 Import Manager Finalization (with Aliasing)
+### 3.9 Import Manager Finalization (with Aliasing)
 - [ ] ❌ Ensure import manager tracks all required imports
 - [ ] ❌ Emit imports at top of Python module in **deterministic order**:
   1. Standard library imports with aliases: `import math as _js_math`, `import random as _js_random`, `import re as _js_re`, `import time as _js_time`
@@ -805,7 +828,7 @@ switch (x) {
 
 ---
 
-### 3.9 Phase 3 Integration Tests
+### 3.10 Phase 3 Integration Tests
 - [ ] ❌ Test function using multiple Math methods
 - [ ] ❌ Test string manipulation with multiple methods
 - [ ] ❌ Verify imports are correctly generated
@@ -1007,6 +1030,10 @@ switch (x) {
     - Declared in current or parent scope
     - Global identifiers (NaN, Infinity, undefined)
     - Standard library (Math, String, Date, console, etc.)
+  - **EXCEPTION**: `typeof undeclaredIdentifier` does NOT error (JS allows typeof on undeclared vars without ReferenceError)
+    - Check if identifier is direct child of `UnaryExpression` with operator `typeof`
+    - If so, skip validation and allow transpilation
+    - Mirror the special-case from 4.5 (typeof operator handling)
   - Error code: `E_UNRESOLVED_IDENTIFIER`
   - Message: "Identifier 'X' is not declared. JavaScript would throw ReferenceError."
   - Helps catch typos and ensures clean transpiled code
@@ -1077,8 +1104,12 @@ switch (x) {
   - `toString()`, `toISOString()`
   - Document timezone assumptions in runtime docstring
   - **Edge case**: Test end-of-month boundary after `setFullYear` on Feb 29 non-leap-year; document as limitation if not covered
+- [ ] ❌ Implement `js_date_now()` runtime helper for `Date.now()`
+  - `Date.now()` → `js_date_now()` → `int(_js_time.time() * 1000)` (milliseconds since epoch)
+  - Add `import time as _js_time` via import manager
 - [ ] ❌ Transform `NewExpression` with callee `Date` → `JSDate(...)`
-- [ ] ❌ Add `from js_compat import JSDate` via import manager
+- [ ] ❌ Transform `CallExpression` with `Date.now` → `js_date_now()`
+- [ ] ❌ Add `from js_compat import JSDate, js_date_now` via import manager
 
 **Test:** `new Date()` → `JSDate()`, verify timestamp is reasonable
 
@@ -1412,12 +1443,12 @@ switch (x) {
 3. What to change (suggestion or workaround)
 
 **Architectural Decisions:**
-- **Python version**: Python ≥ 3.7 (statement-temp mode); ≥ 3.8 for --use-walrus mode
-- **Default codegen strategy**: Statement-temp lifting (avoids walrus dependency, works on 3.7+)
+- **Python version**: Python ≥ 3.8 REQUIRED (walrus operator is the single strategy)
+- **Codegen strategy**: Walrus operator for logical expressions and assignment-in-expression contexts
 - **Return semantics**: Bare `return;` → `return JSUndefined` (NOT Python's implicit `None`)
-- **SequenceExpression**: Limited to for-init/update in statement-temp mode; general support with --use-walrus
-- **Assignment-in-expression**: Statement-temp lifting default; walrus optional with --use-walrus
-- **Logical operators**: Statement-temp pattern default; walrus optional
+- **SequenceExpression**: Limited to for-init/update contexts (most common use case)
+- **Assignment-in-expression**: Walrus operator (`:=`) for all contexts
+- **Logical operators**: Walrus operator pattern: `a && b` → `(b if js_truthy(_temp := a) else _temp)`
 - **Strict equality**: Use `js_strict_eq()` for ALL `===` (including switch); identity for objects, value for primitives; -0 vs +0 not distinguished
 - **Augmented assignment**: `+=` uses `js_add()` (string concat + numeric); `-=`/`*=`/`/=`/`%=` numeric-only (error on type mismatch)
 - **Loose equality**: Primitives + null/undefined only; error on objects/arrays (ToPrimitive complexity)
