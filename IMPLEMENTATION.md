@@ -67,13 +67,16 @@ Before implementing, ensure these key semantic issues are addressed:
 
 19. **Error messages**: Include node type, location, "why" explanation, and "what to change" suggestion. Optional: Add error codes (e.g., `E_UNSUPPORTED_FEATURE`) for programmatic filtering.
 
-20. **AssignmentExpression used as expression**: JS allows assignments inside `if`, `while`, logical expressions, and ternaries. Python requires walrus or statement lifting.
-   - `if (x = y)` → `if js_truthy(_temp := y): x = _temp` (walrus + truthiness wrapper)
-   - `while (x = y)` → similar pattern
-   - `a && (x = y)` → evaluate assignment, use result in logical
-   - `cond ? (x = y) : z` → ternary with assignment in branch
+20. **AssignmentExpression used as expression**: JS allows assignments inside `if`, `while`, logical expressions, and ternaries.
+   - **DECISION FOR DEMO**: Default to statement-temp lifting (works Python 3.7+, avoids walrus risks)
+   - Alternative (future optimization): Use walrus operator if `@kriss-u/py-ast` verified to support it
+   - Pattern (statement-temp): Lift assignment to statement before expression context, use variable in expression
+   - `if (x = y)` → `x = y; if js_truthy(x): ...` (statement lifting)
+   - `while (x = y)` → `x = y; while js_truthy(x): ... x = y` (re-evaluate in loop)
+   - `a && (x = y)` → lift assignment before logical expression
    - **CRITICAL**: Ensure single-evaluation semantics (evaluate RHS once, assign, use value)
-   - Requires walrus operator (Python ≥ 3.8) or statement lifting (3.7 fallback)
+   - **CRITICAL**: Handle ALL contexts that can host assignment: if/while tests, logical expressions, ternaries, call args, return values
+   - Keep walrus path as optional enhancement (`--use-walrus` flag), not core dependency
 
 21. **Single-evaluation of assignment/update targets**: For `MemberExpression` targets, capture base and key in temps before read/compute/write.
    - `obj().prop += f()` must evaluate `obj()` exactly once
@@ -82,14 +85,49 @@ Before implementing, ensure these key semantic issues are addressed:
    - Applies to ALL `AssignmentExpression` and `UpdateExpression` with member targets
    - Create "single-eval assignment target" utility in transformer
 
-22. **Walrus operator availability**: Verify `@kriss-u/py-ast` supports walrus (`:=`) in Phase 1 setup. If unsupported, default to statement-temp pattern (not walrus) for all assignment-in-expression cases.
+22. **SequenceExpression scope**: Limit to for-init/update contexts first. General expression-level support without walrus is complex.
+   - **DECISION FOR DEMO**: Support in for-init/update (most common use case)
+   - Optional: Support in statement contexts (where lifting to multiple statements is legal)
+   - **Defer**: SequenceExpression inside pure expression contexts (nested boolean/logical/ternary) unless using walrus
+   - If walrus unavailable and SequenceExpression appears in illegal lifting context → error with clear message
+   - Document limits explicitly
 
-23. **Augmented assignment single-evaluation**: For `obj[key] += val`, temp base/key once:
+23. **Augmented assignment policy**: **DECISION FOR DEMO**: Numeric-only. Error on type mismatches.
+   - `+=` uses `js_add` (handles string concat + numeric addition)
+   - `-=`, `*=`, `/=`, `%=` are numeric-only; error with code `E_NUM_AUGMENT_COERCION` on type mismatch
+   - Document full coercion as future enhancement
+   - Simplifies runtime and reduces edge-case bugs
+
+24. **Augmented assignment single-evaluation**: For `obj[key] += val`, temp base/key once:
    - Capture `_base := obj`, `_key := key`, `_val := val`
    - Read: `_base[_key]`
    - Compute: `js_add(_base[_key], _val)`
    - Write: `_base[_key] = result`
    - Ensures all side effects happen exactly once in correct order
+
+25. **Bitwise operators**: All bitwise ops (`|`, `&`, `^`, `~`, `<<`, `>>`, `>>>`) are **out of scope**.
+   - Error with code `E_BITWISE_UNSUPPORTED`
+   - Message: "Bitwise operators are not supported. Use Math.floor() to truncate or arithmetic equivalents."
+   - Add tests that error clearly with helpful alternatives
+
+26. **Array and Object library methods**: Most array/object methods are **out of scope**.
+   - Out of scope: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc.
+   - Out of scope: `Object.keys`, `Object.values`, `Object.assign`, etc.
+   - Error with code `E_ARRAY_METHOD_UNSUPPORTED` or `E_OBJECT_METHOD_UNSUPPORTED`
+   - Message: "Array/Object method 'X' is not supported. Use explicit loops or supported alternatives."
+   - Document in "Known Limitations" section
+
+27. **Regex usage beyond literals**: Map common regex usage patterns.
+   - Map `regex.test(str)` → `bool(regex.search(str))` or `js_regex_test(regex, str)` helper
+   - Map `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
+   - Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope (or add minimal helpers)
+   - Add explicit tests for `.test()` and `replace()` with regex argument
+
+28. **Loose equality guardrails**: Error on unsupported coercions.
+   - If either operand to `==`/`!=` is list/dict/callable → error with code `E_LOOSE_EQ_OBJECT`
+   - Message: "Loose equality with objects/arrays is not supported (ToPrimitive coercion complexity). Use strict equality (===) or explicit comparison."
+   - Only primitives + null/undefined rules are supported in `js_loose_eq`
+   - Document exact supported subset in runtime docstring
 
 ---
 
@@ -99,15 +137,17 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Create project structure (src/, tests/, runtime/)
 - [ ] ❌ Initialize package.json with dependencies: `acorn`, `@kriss-u/py-ast`
   - **Pin versions**: Specify exact versions for `acorn` and `@kriss-u/py-ast` for reproducibility
-  - Document Node.js version (e.g., Node 18 LTS) and Python version (≥3.8)
+  - Document Node.js version (e.g., Node 18 LTS) and Python version (≥3.7 for statement-temp mode, ≥3.8 for walrus mode)
 - [ ] ❌ Configure TypeScript/JavaScript environment
 - [ ] ❌ Set up test framework (Jest or similar)
 - [ ] ❌ Create basic CLI entry point (`src/cli.ts` or `src/cli.js`)
-  - Add `--py37` flag to force Python 3.7-compatible output (no walrus operator, use statement temps)
+  - **Default mode**: Statement-temp lifting (Python 3.7+ compatible)
+  - Add `--use-walrus` flag to enable walrus operator (requires Python ≥3.8 and `@kriss-u/py-ast` support)
+  - Add `--strict` flag to error on any feature requiring nontrivial runtime helpers (optional, handy for demo)
   - Add runtime preflight: Verify Python ≥ 3.8 if walrus is used in emitted code (emit error if not met)
-- [ ] ❌ **Verify walrus support**: Test that `@kriss-u/py-ast` can unparse walrus operator (`:=`)
-  - If unsupported, default to statement-temp pattern for assignment-in-expression
-  - Document which pattern is used (walrus vs statement-temp) based on this check
+- [ ] ❌ **Optional: Verify walrus support**: Test that `@kriss-u/py-ast` can unparse walrus operator (`:=`)
+  - Default to statement-temp pattern; walrus is optional enhancement
+  - Document which pattern is used (statement-temp default, walrus optional)
 
 **Deliverable:** Working build system, empty transpiler skeleton that can be invoked
 
@@ -179,13 +219,17 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Transform `==` and `!=` → `js_loose_eq()` and `js_loose_neq()` calls (add to runtime in Phase 4)
 - [ ] ❌ Transform `LogicalExpression` (`&&`, `||`) → **return original operand values** (not booleans)
   - **CRITICAL**: JS returns the actual operand, not a coerced boolean
-  - `a && b` → `(b if js_truthy(_temp := a) else _temp)` using walrus operator (Python ≥ 3.8)
-  - `a || b` → `(_temp if js_truthy(_temp := a) else b)` using walrus operator (Python ≥ 3.8)
+  - **Default strategy (statement-temp)**:
+    - `a && b` → `__js_tmp1 = a; result = b if js_truthy(__js_tmp1) else __js_tmp1`
+    - `a || b` → `__js_tmp1 = a; result = __js_tmp1 if js_truthy(__js_tmp1) else b`
+  - Alternative (if `--use-walrus`):
+    - `a && b` → `(b if js_truthy(_temp := a) else _temp)` using walrus operator
+    - `a || b` → `(_temp if js_truthy(_temp := a) else b)` using walrus operator
   - Create temp allocator in transformer state for unique temp names (prefix: `__js_tmp1`, `__js_tmp2`, etc. to avoid user code collisions)
   - Single-eval semantics: Evaluate left operand once, store in temp (important for side effects)
   - **Nested logicals**: Require a temp per short-circuit boundary to ensure single-eval across nesting
     - Example: `a && b && c` → two temps (one for `a`, one for `a && b`)
-  - Alternative for Python < 3.8: Emit temp variable assignment statement before IfExp (more verbose)
+  - Test with both statement-temp and walrus modes to ensure operand identity preservation
 - [ ] ❌ Transform `UnaryExpression`:
   - `!` → `not js_truthy(...)`
   - `-` (unary minus) → direct for numbers, or use `js_negate()` for coercion
@@ -219,11 +263,16 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Transform `VariableDeclarator` with initializer → Python `Assign`
 - [ ] ❌ Transform `AssignmentExpression`:
   - **CRITICAL**: Handle assignment used as expression (see Critical Correctness #20)
-    - If assignment appears in boolean context (`if`, `while`, logical, ternary test): Wrap with `js_truthy()` and use walrus or statement-temp
-    - If assignment appears in value context: Ensure single-evaluation (evaluate RHS once, assign, return value)
+    - **Default strategy**: Statement-temp lifting (works on Python 3.7+)
+    - `if (x = y)` → lift to statement: `x = y; if js_truthy(x): ...`
+    - `while (x = y)` → `x = y; while js_truthy(x): ... x = y` (re-evaluate in loop)
+    - `a && (x = y)` → lift assignment before logical expression
+    - Call args, return values, etc.: Lift to statement before usage
+    - Alternative (if `--use-walrus`): Use walrus operator `(_temp := expr)` pattern
+    - Ensure single-evaluation (evaluate RHS once, assign, use value)
   - `=` → `Assign`
-  - `+=` → **CRITICAL**: Use `js_add(lhs, rhs)` (string concat if either is string, not Python `+=`)
-  - `-=`, `*=`, `/=`, `%=` → Numeric-only (recommended for demo); error on type mismatch with code `E_NUM_AUGMENT_COERCION`
+  - `+=` → **CRITICAL**: Use `js_add(lhs, rhs)` (handles string concat + numeric addition)
+  - `-=`, `*=`, `/=`, `%=` → **Numeric-only** (demo decision); error on type mismatch with code `E_NUM_AUGMENT_COERCION`
   - Transform to: `lhs = js_add(lhs, rhs)` (not Python AugAssign which has different semantics)
 - [ ] ❌ **Single-evaluation for member targets** (see Critical Correctness #21, #23):
   - For `MemberExpression` target: Capture base and key in temps before read/compute/write
@@ -238,13 +287,17 @@ Before implementing, ensure these key semantic issues are addressed:
 
 **Test:** `var x = 5; x += '3';` → `x = js_add(x, '3')` → `'53'` (string concatenation)
 
-**Test (assignment in condition):** `if (x = f()) { ... }` → `if js_truthy(_temp := f()): x = _temp` (walrus pattern)
+**Test (assignment in condition):** `if (x = f()) { ... }` → `x = f(); if js_truthy(x): ...` (statement-temp pattern)
 
-**Test (assignment in while):** `while (x = next()) { ... }` → similar walrus pattern with truthiness
+**Test (assignment in while):** `while (x = next()) { ... }` → `x = next(); while js_truthy(x): ... x = next()` (re-evaluate)
 
-**Test (assignment in logical):** `a && (x = y)` → evaluate assignment, use result in logical
+**Test (assignment in logical):** `a && (x = y)` → lift assignment before logical
 
-**Test (assignment in ternary):** `(x = y) ? a : b` → ternary with assignment in test
+**Test (assignment in ternary):** `(x = y) ? a : b` → lift assignment before ternary
+
+**Test (assignment in call arg):** `f(x = y)` → `x = y; f(x)` (lift before call)
+
+**Test (assignment in return):** `return (x = y);` → `x = y; return x;` (lift before return)
 
 **Test (member augassign single-eval):** `getObj().prop += f()` → `_base = getObj(); _base['prop'] = js_add(_base['prop'], f())` (evaluates `getObj()` once)
 
@@ -304,24 +357,26 @@ Before implementing, ensure these key semantic issues are addressed:
 
 ### 1.8 SequenceExpression (Comma Operator)
 - [ ] ❌ Transform `SequenceExpression` → evaluate expressions left-to-right, return last value
-  - **CRITICAL**: Common in for-loops: `for(i=0, j=0; ...; i++, j++)`
-  - **CRITICAL**: Required for for-init/update and general parens
-  - **CRITICAL**: Can appear in conditionals: `(f(), g(), h()) ? ...` (evaluate all, use last for test)
+  - **SCOPE DECISION FOR DEMO**: Limit to for-init/update contexts (most common use case)
+  - **CRITICAL**: Required for for-loops: `for(i=0, j=0; ...; i++, j++)`
+  - **Optional**: Support in statement contexts where lifting to multiple statements is legal
+  - **Defer/Error**: SequenceExpression inside pure expression contexts (nested boolean/logical/ternary) unless using walrus
+    - If statement-temp mode and SequenceExpression appears in illegal lifting context → error with code `E_SEQUENCE_EXPR_CONTEXT`
+    - Message: "SequenceExpression in this context requires --use-walrus mode or refactoring to separate statements."
   - Acorn produces `SequenceExpression` with `expressions` array
-  - Generate Python code that evaluates all expressions in order, returns last
-  - Use temp variables for single-eval semantics if expressions have side effects
+  - For for-init/update: Emit each expression as separate statement
+  - For statement contexts: Emit statement for each expression except last; return last expression value
   - Create transformer utility to "evaluate list left-to-right and return last node"
   - Cover side-effect cases explicitly
-  - Pattern: Emit statement for each expression except last; return last expression value
-  - Example: `(a, b, c)` → evaluate `a`, then `b`, then return `c`
+  - Document limits explicitly in "Known Limitations"
 
-**Test:** `var x = (1, 2, 3);` → `x` is `3`
+**Test:** `for (var i = 0, j = 0; i < 3; i++, j++) { ... }` → init and update both use SequenceExpression (supported)
 
-**Test:** `for (var i = 0, j = 0; i < 3; i++, j++) { ... }` → init and update both use SequenceExpression
+**Test:** `var x; x = (a(), b(), c());` → statement context; emit `a(); b(); x = c();` (supported if in statement position)
 
-**Test:** `var y = (f(), g(), h());` → calls f(), g(), h() in order, returns h()'s value with side effects
+**Test (deferred/error):** `(f(), g(), h()) ? a : b` → error in statement-temp mode: "SequenceExpression in conditional test requires --use-walrus mode"
 
-**Test (sequence in conditional):** `(f(), g(), h()) ? a : b` → evaluate `f()`, `g()`, `h()` in order; use `h()`'s value with `js_truthy()` for test
+**Test (deferred/error):** `var x = (1, 2, 3);` → error or support via statement lifting depending on context legality
 
 ---
 
@@ -417,6 +472,12 @@ Before implementing, ensure these key semantic issues are addressed:
 **Test:** `for (var i = 0; i < 10; i++) { if (i % 2) continue; sum += i; }` → update must run on continue
 **Test (nested loops):** `for (var i = 0; i < 3; i++) { for (var j = 0; j < 3; j++) { if (j == 1) continue; } }` → inner continue does NOT trigger outer update
 
+**Test (multiple continues):** `for (var i = 0; i < 10; i++) { if (a) continue; if (b) continue; stmt; }` → both continues run update
+
+**Test (continue in nested blocks):** `for (var i = 0; i < 10; i++) { if (cond) { if (inner) continue; } stmt; }` → continue runs update
+
+**Test (deeply nested loops):** Three-level nesting with continues at each level → verify loop ID tagging isolates each loop's update injection
+
 ---
 
 ### 2.7 For-In Loops
@@ -483,6 +544,10 @@ switch (x) {
 **Test:** `switch (x) { case 1: stmt1; case 2: case 3: stmt2; break; }` → error: subtle fall-through (non-empty → empty → non-empty without break)
 
 **Test (NaN in switch):** `var x = NaN; switch(x) { case NaN: return 'matched'; default: return 'no match'; }` → returns 'no match' (NaN !== NaN via `js_strict_eq`)
+
+**Test (case alias chain validation):** `switch(x) { case 1: case 2: case 3: stmt; break; }` → valid (alias chain ends in non-empty case with break)
+
+**Test (case alias chain error):** `switch(x) { case 1: case 2: stmt1; case 3: stmt2; break; }` → error (alias chain has non-empty case without break before next case)
 
 ---
 
@@ -566,7 +631,28 @@ switch (x) {
 
 ---
 
-### 3.5 String Method Mapping
+### 3.5 Regex Method Mapping
+- [ ] ❌ Map `regex.test(str)` method calls
+  - Transform `regex.test(str)` → `bool(regex.search(str))` (Python re.search returns Match or None)
+  - Assumes `regex` is a compiled regex object from Phase 4
+  - Add test for regex literal with `.test()`: `/\d+/.test('123')` → `True`
+- [ ] ❌ Map `str.replace(regex, repl)` with regex argument
+  - Transform `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
+  - Ensure `regex` is a compiled regex object
+  - Add test: `'hello world'.replace(/o/, 'O')` → `'hellO world'` (first occurrence only)
+- [ ] ❌ Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope
+  - Error with code `E_REGEX_METHOD_UNSUPPORTED`
+  - Message: "Regex method 'match/exec' is not supported. Use .test() for boolean checks or Python re module directly."
+  - Add to "Known Limitations"
+
+**Test:** `/\d+/.test('123')` → `True`
+**Test:** `/\d+/.test('abc')` → `False`
+**Test:** `'hello world'.replace(/o/, 'O')` → `'hellO world'`
+**Test:** `'hello world'.replace(/o/g, 'O')` → error (global flag unsupported, caught earlier)
+
+---
+
+### 3.6 String Method Mapping
 - [ ] ❌ Detect `.charAt(i)` → `str[i:i+1]`
   - **CRITICAL**: Use slice `str[i:i+1]` (not `str[i]`) to return empty string for out-of-range, matching JS behavior
   - JS: `'abc'.charAt(10)` → `''` (not error)
@@ -595,7 +681,7 @@ switch (x) {
 
 ---
 
-### 3.6 Console.log Mapping
+### 3.7 Console.log Mapping
 - [ ] ❌ Add `console_log(*args)` to runtime library
   - Implement JS-style formatting (space-separated values)
   - This keeps transformer simple and allows future formatting parity
@@ -606,7 +692,7 @@ switch (x) {
 
 ---
 
-### 3.7 Import Manager Finalization
+### 3.8 Import Manager Finalization
 - [ ] ❌ Ensure import manager tracks all required imports
 - [ ] ❌ Emit imports at top of Python module in **deterministic order**:
   1. Standard library imports (`import math`, `import random`, `import re`)
@@ -627,7 +713,7 @@ switch (x) {
 
 ---
 
-### 3.8 Phase 3 Integration Tests
+### 3.9 Phase 3 Integration Tests
 - [ ] ❌ Test function using multiple Math methods
 - [ ] ❌ Test string manipulation with multiple methods
 - [ ] ❌ Verify imports are correctly generated
@@ -727,17 +813,25 @@ switch (x) {
   - Number and string → coerce string to number with `js_to_number()`
   - Boolean → coerce to number (True → 1, False → 0) then compare
   - NaN handling: `NaN == NaN` → `False` (use `math.isnan()`)
-  - **Explicitly unsupported** (document and return `False` or raise error):
+  - **Explicitly unsupported** (error with code `E_LOOSE_EQ_OBJECT`):
+    - If either operand is list/dict/callable → error
     - Object to primitive coercion (ToPrimitive)
     - Date objects
     - Complex array/object comparisons
-  - **Provide tiny table in runtime docstring** listing exactly what is supported
+  - **Provide tiny table in runtime docstring** listing exactly what is supported (primitives + null/undefined only)
 - [ ] ❌ Implement `js_loose_neq(a, b)` → `not js_loose_eq(a, b)`
 - [ ] ❌ Update transformer to route `==`/`!=` to these functions
+- [ ] ❌ **Add guardrails in transformer**: Detect if either operand to `==`/`!=` is likely object/array/function and error
+  - Static detection: If operand is ArrayExpression, ObjectExpression, FunctionExpression → error
+  - Runtime detection: `js_loose_eq` checks type and errors
+  - Message: "Loose equality with objects/arrays is not supported (ToPrimitive coercion complexity). Use strict equality (===) or explicit comparison."
 - [ ] ❌ Document unsupported edge cases in runtime docstring
-- [ ] ❌ **Optional**: Add guardrails in transformer to detect obvious object-vs-primitive `==` and error with link to limitation docs
 
 **Test:** `null == undefined` → `True`, `5 == '5'` → `True`, `true == 1` → `True`, `NaN == NaN` → `False`
+
+**Test (error on object equality):** `{} == {}` → error with code `E_LOOSE_EQ_OBJECT`
+
+**Test (error on array equality):** `[] == []` → error with code `E_LOOSE_EQ_OBJECT`
 
 ---
 
@@ -780,6 +874,8 @@ switch (x) {
 **Test:** Chained behaviors: `var arr = [1,2,3]; delete arr[1]; arr.length; '1' in arr; for (var i in arr) ...` → verify holes persist and for-in skips them
 **Test:** `delete obj.nonExistent` → `True` (no error, returns true for non-existent keys)
 **Test:** `delete arr[999]` → `True` (out-of-range index still returns true, doesn't crash)
+
+**Test (delete non-existent object key):** `var obj = {a: 1}; delete obj.b;` → `True` (no side effects, idempotent)
 
 ---
 
@@ -941,7 +1037,22 @@ switch (x) {
 
 ---
 
-### 5.3 Error Handling Tests
+### 5.3 Unsupported Feature Tests
+- [ ] ❌ Test: Bitwise operators (`|`, `&`, `^`, `~`, `<<`, `>>`, `>>>`) → error with code `E_BITWISE_UNSUPPORTED`
+  - Message: "Bitwise operators are not supported. Use Math.floor() to truncate or arithmetic equivalents."
+  - Test each bitwise operator
+- [ ] ❌ Test: Array methods (`push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`) → error with code `E_ARRAY_METHOD_UNSUPPORTED`
+  - Message: "Array method 'X' is not supported. Use explicit loops or supported alternatives."
+- [ ] ❌ Test: Object methods (`Object.keys`, `Object.values`, `Object.assign`) → error with code `E_OBJECT_METHOD_UNSUPPORTED`
+  - Message: "Object method 'X' is not supported. Use explicit loops or manual property access."
+- [ ] ❌ Test: Regex methods (`match`, `exec`) → error with code `E_REGEX_METHOD_UNSUPPORTED`
+  - Message: "Regex method 'match/exec' is not supported. Use .test() for boolean checks."
+- [ ] ❌ Test: SequenceExpression in illegal context (if statement-temp mode) → error with code `E_SEQUENCE_EXPR_CONTEXT`
+  - `(a(), b()) ? x : y` → error in statement-temp mode
+
+---
+
+### 5.4 Error Handling Tests
 - [ ] ❌ Test: Unsupported node type (e.g., `let`, `const`) → clear error with location and error code
 - [ ] ❌ Test: Unsupported feature (e.g., `this`, `class`) → clear error with error code
 - [ ] ❌ Test: `new UnknownConstructor()` → error
@@ -960,7 +1071,7 @@ switch (x) {
 
 ---
 
-### 5.4 CLI Enhancement
+### 5.5 CLI Enhancement
 - [ ] ❌ Add `--output` flag to write to file
 - [ ] ❌ Add `--run` flag to execute transpiled Python immediately
 - [ ] ❌ Add `--verbose` flag for debugging (show AST, etc.)
@@ -974,7 +1085,7 @@ switch (x) {
 
 ---
 
-### 5.5 Playground (Optional)
+### 5.6 Playground (Optional)
 - [ ] ❌ Create simple web UI (HTML + JS)
 - [ ] ❌ Left panel: JS input (textarea)
 - [ ] ❌ Right panel: Transpiled Python output
@@ -983,7 +1094,7 @@ switch (x) {
 
 ---
 
-### 5.6 Documentation
+### 5.7 Documentation
 - [ ] ❌ Update README.md with usage instructions, examples, supported subset
 - [ ] ❌ **Document Python version requirement: Python ≥ 3.8** (for walrus operator in logical expressions; fallback available for 3.7 if needed)
 - [ ] ❌ **Pin versions**: Document Node.js version (e.g., Node 18 LTS) and Python version (≥3.8) for CI and execution parity tests
@@ -994,7 +1105,18 @@ switch (x) {
   - `E_UNSUPPORTED_NODE`: AST node type not implemented
   - `E_LENGTH_ASSIGN`: Assignment to array `.length` property
   - `E_NUM_AUGMENT_COERCION`: Augmented assignment requires numeric operands
+  - `E_BITWISE_UNSUPPORTED`: Bitwise operators not supported
+  - `E_ARRAY_METHOD_UNSUPPORTED`: Array method not supported
+  - `E_OBJECT_METHOD_UNSUPPORTED`: Object method not supported
+  - `E_REGEX_METHOD_UNSUPPORTED`: Regex method not supported
+  - `E_LOOSE_EQ_OBJECT`: Loose equality with objects/arrays not supported
+  - `E_SEQUENCE_EXPR_CONTEXT`: SequenceExpression in unsupported context
   - Others as needed
+- [ ] ❌ **Add troubleshooting section**: Map common patterns to alternatives
+  - "Use Math.floor() instead of bitwise OR `| 0` to truncate"
+  - "Use explicit for-loop instead of .map()/.filter()/.reduce()"
+  - "Use strict equality (===) instead of loose equality (==) for objects"
+  - "Refactor comma expressions to separate statements or use --use-walrus"
 - [ ] ❌ Document known limitations:
   - **Python ≥ 3.8 recommended** (walrus operator for logical expressions; 3.7 fallback available but verbose)
   - **Return semantics**: `return;` (bare return) yields `undefined`, not `null`
@@ -1012,6 +1134,12 @@ switch (x) {
   - **Delete on identifiers**: Not supported (error)
   - **For-in enumeration order**: Insertion order for objects, ascending numeric for arrays (ES5 order is implementation-quirky)
   - **Method calls requiring 'this'**: Not supported unless recognized standard library method
+  - **Bitwise operators**: All bitwise ops (`|`, `&`, `^`, `~`, `<<`, `>>`, `>>>`) not supported
+  - **Array methods**: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc. not supported
+  - **Object methods**: `Object.keys`, `Object.values`, `Object.assign`, etc. not supported
+  - **Regex methods**: `match`, `exec` not supported; use `.test()` or Python re module
+  - **SequenceExpression limits**: In statement-temp mode, limited to for-init/update; use --use-walrus for general support
+  - **Assignment-in-expression**: Statement-temp lifting default; use --use-walrus for inline pattern
 - [ ] ❌ Provide migration guide (unsupported features and alternatives)
 - [ ] ❌ Document arithmetic coercion strategy decision (numeric-only recommended for demo)
   - Exact coercion tables in runtime docstrings (strings with leading/trailing whitespace, empty string, hex/octal forms if supported)
@@ -1033,7 +1161,7 @@ switch (x) {
 
 ---
 
-### 5.7 Phase 5 Deliverable
+### 5.8 Phase 5 Deliverable
 - [ ] ❌ Complete test suite with 100% coverage of supported subset
 - [ ] ❌ CLI tool ready for use
 - [ ] ❌ (Optional) Working playground demo
@@ -1077,11 +1205,15 @@ switch (x) {
 3. What to change (suggestion or workaround)
 
 **Architectural Decisions:**
-- **Python version**: Requires Python ≥ 3.8 (walrus operator for logical expressions; 3.7 fallback possible)
+- **Python version**: Python ≥ 3.7 (statement-temp mode); ≥ 3.8 for --use-walrus mode
+- **Default codegen strategy**: Statement-temp lifting (avoids walrus dependency, works on 3.7+)
 - **Return semantics**: Bare `return;` → `return JSUndefined` (NOT Python's implicit `None`)
-- **SequenceExpression**: Comma operator supported; evaluate left-to-right, return last value
+- **SequenceExpression**: Limited to for-init/update in statement-temp mode; general support with --use-walrus
+- **Assignment-in-expression**: Statement-temp lifting default; walrus optional with --use-walrus
+- **Logical operators**: Statement-temp pattern default; walrus optional
 - **Strict equality**: Use `js_strict_eq()` for ALL `===` (including switch); identity for objects, value for primitives; -0 vs +0 not distinguished
-- **Augmented assignment**: `+=` uses `js_add()` (string concat); `-=`/`*=`/`/=`/`%=` numeric-only (DECISION: error on type mismatch)
+- **Augmented assignment**: `+=` uses `js_add()` (string concat + numeric); `-=`/`*=`/`/=`/`%=` numeric-only (error on type mismatch)
+- **Loose equality**: Primitives + null/undefined only; error on objects/arrays (ToPrimitive complexity)
 - **Global identifiers**: Map `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `math.inf`
 - **Member access**: Default to subscript `obj['prop']` (reads AND writes); exception: `.length` detection
 - **Break/Continue validation**: Pre-pass tags nodes with loop/switch ancestry for better diagnostics
@@ -1092,5 +1224,8 @@ switch (x) {
 - **No try/catch**: Out of scope; throw raises JSException but cannot be caught
 - **Delete on identifiers**: ERROR (recommended; consistent in transformer + runtime)
 - **JSDate timezone**: Use UTC for predictability
+- **Bitwise operators**: Out of scope; error with alternatives suggested
+- **Array/Object methods**: Out of scope; error with manual loop alternatives
+- **Regex usage**: `.test()` and `.replace()` supported; `.match()`/`.exec()` out of scope
 
 **Progress Tracking:** Update checkboxes as you complete tasks. Change ❌ → 🔄 when starting, 🔄 → ✅ when done.
