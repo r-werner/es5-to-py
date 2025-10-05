@@ -62,6 +62,32 @@ This spec establishes the runtime library foundation that all other specs depend
 
 ---
 
+## Project Scaffolding
+
+To make this spec executable in isolation, set up a minimal Python package and test harness:
+
+- Create directories:
+  - `runtime/`
+  - `tests/runtime/`
+- Create `runtime/__init__.py` (empty file) so `runtime` is an importable package.
+- Add `requirements-dev.txt` with:
+  ```
+  pytest>=7,<9
+  ```
+- Optional but recommended: `pytest.ini` at the repo root to ensure imports work without PYTHONPATH tweaks:
+  ```ini
+  [pytest]
+  pythonpath = .
+  ```
+
+How to run:
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+---
+
 ## Runtime Helpers
 
 ### 1. `JSUndefined` Sentinel
