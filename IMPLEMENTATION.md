@@ -8,7 +8,7 @@
 
 Before implementing, ensure these key semantic issues are addressed:
 
-1. **Python version requirement**: Python ≥ 3.7 supported (statement-temp mode is default). Python ≥ 3.8 required only for optional `--use-walrus` mode. Document this clearly.
+1. **Python version requirement**: Python ≥ 3.8 required. This simplifies implementation by allowing walrus operator for logical expressions and assignment-in-expression contexts without maintaining two code paths. Statement-temp mode is no longer needed.
 
 2. **Strict equality for objects/arrays/functions**:
    - **CRITICAL BUG**: Python `==` uses value equality; JS `===` uses identity for objects
@@ -68,15 +68,12 @@ Before implementing, ensure these key semantic issues are addressed:
 19. **Error messages**: Include node type, location, "why" explanation, and "what to change" suggestion. Optional: Add error codes (e.g., `E_UNSUPPORTED_FEATURE`) for programmatic filtering.
 
 20. **AssignmentExpression used as expression**: JS allows assignments inside `if`, `while`, logical expressions, and ternaries.
-   - **DECISION FOR DEMO**: Default to statement-temp lifting (works Python 3.7+, avoids walrus risks)
-   - Alternative (future optimization): Use walrus operator if `@kriss-u/py-ast` verified to support it
-   - Pattern (statement-temp): Lift assignment to statement before expression context, use variable in expression
-   - `if (x = y)` → `x = y; if js_truthy(x): ...` (statement lifting)
-   - `while (x = y)` → `x = y; while js_truthy(x): ... x = y` (re-evaluate in loop)
-   - `a && (x = y)` → lift assignment before logical expression
+   - **DECISION**: Use walrus operator (`:=`) since Python ≥ 3.8 is required
+   - Pattern: `if (x = y)` → `if js_truthy(x := y): ...`
+   - Pattern: `a && (x = y)` → `(x := y) if js_truthy(_temp := a) else _temp`
    - **CRITICAL**: Ensure single-evaluation semantics (evaluate RHS once, assign, use value)
    - **CRITICAL**: Handle ALL contexts that can host assignment: if/while tests, logical expressions, ternaries, call args, return values
-   - Keep walrus path as optional enhancement (`--use-walrus` flag), not core dependency
+   - Verify `@kriss-u/py-ast` supports walrus operator (NamedExpr node)
 
 21. **Single-evaluation of assignment/update targets**: For `MemberExpression` targets, capture base and key in temps before read/compute/write.
    - `obj().prop += f()` must evaluate `obj()` exactly once
@@ -85,12 +82,11 @@ Before implementing, ensure these key semantic issues are addressed:
    - Applies to ALL `AssignmentExpression` and `UpdateExpression` with member targets
    - Create "single-eval assignment target" utility in transformer
 
-22. **SequenceExpression scope**: Limit to for-init/update contexts first. General expression-level support without walrus is complex.
-   - **DECISION FOR DEMO**: Support in for-init/update (most common use case)
-   - Optional: Support in statement contexts (where lifting to multiple statements is legal)
-   - **Defer**: SequenceExpression inside pure expression contexts (nested boolean/logical/ternary) unless using walrus
-   - If walrus unavailable and SequenceExpression appears in illegal lifting context → error with clear message
-   - Document limits explicitly
+22. **SequenceExpression scope**: Support in for-init/update contexts (most common use case).
+   - **DECISION**: Limit to for-init/update; general expression-level comma operators are rare in ES5
+   - For-init/update: emit each expression as separate statement
+   - **Defer**: SequenceExpression inside pure expression contexts (nested ternary/call args) → error with code `E_SEQUENCE_EXPR_CONTEXT`
+   - Message: "SequenceExpression in this context is not supported. Refactor to separate statements."
 
 23. **Augmented assignment policy**: **DECISION FOR DEMO**: Numeric-only. Error on type mismatches.
    - `+=` uses `js_add` (handles string concat + numeric addition)
@@ -130,11 +126,40 @@ Before implementing, ensure these key semantic issues are addressed:
 
 28. **Regex usage beyond literals**: Map common regex usage patterns.
    - Map `regex.test(str)` → `bool(regex.search(str))` or `js_regex_test(regex, str)` helper
-   - Map `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
+   - Map `str.replace(regex, repl)`:
+     - **Without 'g' flag**: `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
+     - **With 'g' flag**: `regex.sub(repl, str, count=0)` (unlimited replacements, global)
+     - **SPECIAL CASE**: Allow 'g' flag ONLY for `String.prototype.replace` (common real-world pattern)
+     - Error on 'g' flag elsewhere (regex literals not used in replace context)
    - Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope (or add minimal helpers)
    - Add explicit tests for `.test()` and `replace()` with regex argument
+   - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace)
 
-29. **Loose equality guardrails**: Error on unsupported coercions.
+29. **Identifier sanitization for Python keywords**: Real-world code uses identifiers that collide with Python keywords/builtins.
+   - **CRITICAL**: Sanitize identifiers that collide with Python reserved words or literals
+   - Python keywords: `class`, `from`, `import`, `def`, `return`, `if`, `else`, `elif`, `while`, `for`, `in`, `is`, `not`, `and`, `or`, `async`, `await`, `with`, `try`, `except`, `finally`, `raise`, `assert`, `lambda`, `yield`, `global`, `nonlocal`, `del`, `pass`, `break`, `continue`, etc.
+   - Python literals: `None`, `True`, `False`
+   - **Policy**: If identifier collides, append `_js` suffix (e.g., `class` → `class_js`, `from` → `from_js`)
+   - **Apply to**: Variables, function names, parameters
+   - **Do NOT apply to**: Object property keys (since we use subscript access `obj['class']`)
+   - Maintain mapping table in transformer for consistent renaming
+   - Add tests: `var class = 5;`, `function from() {}`, parameter named `None`
+
+30. **Stdlib import aliasing to avoid name collisions**: Users may define variables named `math`, `random`, `re`, `time`.
+   - **CRITICAL**: Import stdlib with stable aliases to avoid collisions with user code
+   - `import math as _js_math`
+   - `import random as _js_random`
+   - `import re as _js_re`
+   - `import time as _js_time`
+   - Update ALL mappings to use aliased names:
+     - `Math.sqrt(x)` → `_js_math.sqrt(x)` (not `math.sqrt(x)`)
+     - `Math.random()` → `_js_random.random()` (not `random.random()`)
+     - `compile_js_regex()` → `_js_re.compile()` in runtime
+     - `js_date_now()` → `_js_time.time()` in runtime
+   - Ensure runtime library uses aliased imports consistently
+   - Add tests: `var math = 42; return Math.sqrt(16) + math;` → verify user `math` and stdlib `_js_math` don't collide
+
+31. **Loose equality guardrails**: Error on unsupported coercions.
    - If either operand to `==`/`!=` is list/dict/callable → error with code `E_LOOSE_EQ_OBJECT`
    - Message: "Loose equality with objects/arrays is not supported (ToPrimitive coercion complexity). Use strict equality (===) or explicit comparison."
    - Only primitives + null/undefined rules are supported in `js_loose_eq`
@@ -148,17 +173,17 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Create project structure (src/, tests/, runtime/)
 - [ ] ❌ Initialize package.json with dependencies: `acorn`, `@kriss-u/py-ast`
   - **Pin versions**: Specify exact versions for `acorn` and `@kriss-u/py-ast` for reproducibility
-  - Document Node.js version (e.g., Node 18 LTS) and Python version (≥3.7 for statement-temp mode, ≥3.8 for walrus mode)
+  - Document Node.js version (e.g., Node 18 LTS) and Python version (≥ 3.8 required)
 - [ ] ❌ Configure TypeScript/JavaScript environment
 - [ ] ❌ Set up test framework (Jest or similar)
 - [ ] ❌ Create basic CLI entry point (`src/cli.ts` or `src/cli.js`)
-  - **Default mode**: Statement-temp lifting (Python 3.7+ compatible)
-  - Add `--use-walrus` flag to enable walrus operator (requires Python ≥3.8 and `@kriss-u/py-ast` support)
-  - Add `--strict` flag to error on any feature requiring nontrivial runtime helpers (optional, handy for demo)
-  - Add runtime preflight: Verify Python ≥ 3.8 if walrus is used in emitted code (emit error if not met)
-- [ ] ❌ **Optional: Verify walrus support**: Test that `@kriss-u/py-ast` can unparse walrus operator (`:=`)
-  - Default to statement-temp pattern; walrus is optional enhancement
-  - Document which pattern is used (statement-temp default, walrus optional)
+  - Add `--output <file>` flag to write to file
+  - Add `--run` flag to execute transpiled Python immediately
+  - Add `--verbose` flag for debugging (show AST, etc.)
+  - Emit Python version check in generated code header comment: `# Requires Python >= 3.8`
+- [ ] ❌ **Verify walrus support**: Test that `@kriss-u/py-ast` can unparse walrus operator (`:=` / NamedExpr node)
+  - Required for assignment-in-expression contexts
+  - Document walrus operator usage in generated code
 
 **Deliverable:** Working build system, empty transpiler skeleton that can be invoked
 
@@ -174,9 +199,20 @@ Before implementing, ensure these key semantic issues are addressed:
   - `allowReserved: true` (ES5 allows reserved words in some contexts)
   - Verify Acorn node shapes: `node.regex.pattern`, `node.regex.flags`, `SequenceExpression.expressions`
 - [ ] ❌ Create `src/errors.ts`: Define `UnsupportedNodeError`, `UnsupportedFeatureError` with source location formatting
+- [ ] ❌ Create `src/identifier-sanitizer.ts`: **CRITICAL** for real-world code
+  - Maintain set of Python keywords and reserved literals
+  - Keywords: `class`, `from`, `import`, `def`, `return`, `if`, `else`, `elif`, `while`, `for`, `in`, `is`, `not`, `and`, `or`, `async`, `await`, `with`, `try`, `except`, `finally`, `raise`, `assert`, `lambda`, `yield`, `global`, `nonlocal`, `del`, `pass`, `break`, `continue`
+  - Literals: `None`, `True`, `False`
+  - Function `sanitizeIdentifier(name: string): string` → append `_js` if collision
+  - Apply to: variable names, function names, parameters
+  - Do NOT apply to: object property keys (subscript access handles this)
+  - Test with: `var class = 5;`, `function from() {}`, `var None = null;`
 - [ ] ❌ Create `src/transformer.ts`: Base visitor class/framework for traversing ESTree AST
 - [ ] ❌ Create `src/generator.ts`: Python AST unparsing using `@kriss-u/py-ast`
-- [ ] ❌ Create `src/import-manager.ts`: Track required imports (`math`, `random`, `re`, `js_compat`)
+- [ ] ❌ Create `src/import-manager.ts`: Track required imports with **aliasing**
+  - Use aliased imports to avoid collisions: `import math as _js_math`, `import random as _js_random`, `import re as _js_re`, `import time as _js_time`
+  - Track which aliases are needed based on feature usage
+  - Emit imports in deterministic order
 
 **Deliverable:** Pipeline infrastructure: parse JS → transform to Python AST → generate Python code
 
@@ -653,23 +689,24 @@ switch (x) {
 
 ---
 
-### 3.3 Math Library Mapping
+### 3.3 Math Library Mapping (with Aliased Imports)
 - [ ] ❌ Detect `Math.abs`, `Math.max`, `Math.min` → Python built-ins `abs()`, `max()`, `min()`
-- [ ] ❌ Detect `Math.sqrt`, `Math.floor`, `Math.ceil`, `Math.log`, `Math.log10`, `Math.log2` → `math.sqrt()`, etc.
-- [ ] ❌ Add `import math` via import manager when needed
+- [ ] ❌ Detect `Math.sqrt`, `Math.floor`, `Math.ceil`, `Math.log`, `Math.log10`, `Math.log2` → `_js_math.sqrt()`, etc.
+- [ ] ❌ Add `import math as _js_math` via import manager when needed
 - [ ] ❌ Detect `Math.pow(x, y)` → `x ** y` (Python power operator)
 - [ ] ❌ Detect `Math.round(x)` → `round(x)` (note: different .5 rounding behavior, document limitation)
-- [ ] ❌ Detect `Math.random()` → `random.random()`, add `import random`
-- [ ] ❌ Detect `Math.PI` → `math.pi`, `Math.E` → `math.e`
+- [ ] ❌ Detect `Math.random()` → `_js_random.random()`, add `import random as _js_random`
+- [ ] ❌ Detect `Math.PI` → `_js_math.pi`, `Math.E` → `_js_math.e`
 - [ ] ❌ **Add Date.now() mapping**:
   - `Date.now()` → `js_date_now()` runtime helper (returns milliseconds since epoch as int)
-  - Runtime: `def js_date_now(): return int(time.time() * 1000)` (requires `import time`)
-  - Alternative: `int(JSDate().getTime())` but direct helper is cleaner
-  - Add `import time` via import manager when `Date.now()` is used
+  - Runtime: `def js_date_now(): return int(_js_time.time() * 1000)` (requires `import time as _js_time`)
+  - Add `import time as _js_time` via import manager when `Date.now()` is used
 
-**Test:** `Math.sqrt(16)` → `math.sqrt(16)` with `import math`
+**Test:** `Math.sqrt(16)` → `_js_math.sqrt(16)` with `import math as _js_math`
 
-**Test:** `Date.now()` → `js_date_now()` with `import time`
+**Test:** `Date.now()` → `js_date_now()` with `import time as _js_time`
+
+**Test (name collision):** `var math = 42; return Math.sqrt(16) + math;` → verify user `math` and stdlib `_js_math` don't collide
 
 ---
 
@@ -745,24 +782,26 @@ switch (x) {
 
 ---
 
-### 3.8 Import Manager Finalization
+### 3.8 Import Manager Finalization (with Aliasing)
 - [ ] ❌ Ensure import manager tracks all required imports
 - [ ] ❌ Emit imports at top of Python module in **deterministic order**:
-  1. Standard library imports (`import math`, `import random`, `import re`, `import time`)
-  2. Runtime imports (`from js_compat import ...`)
-- [ ] ❌ **CRITICAL**: Use consistent import style
-  - Standard library: `import math` (call via `math.*`)
-  - **DO NOT** mix `import math` and `from math import ...`
+  1. Standard library imports with aliases: `import math as _js_math`, `import random as _js_random`, `import re as _js_re`, `import time as _js_time`
+  2. Runtime imports: `from js_compat import ...`
+- [ ] ❌ **CRITICAL**: Use aliased imports consistently
+  - Standard library: `import math as _js_math` (call via `_js_math.*`)
+  - **Prevents name collisions**: User code can define `var math = ...` without conflict
+  - **DO NOT** mix aliased and non-aliased imports
   - This prevents conflicts and keeps codegen simple
 - [ ] ❌ Deduplicate imports
-- [ ] ❌ **Only import when used**: Do not import `math`/`random`/`re`/`time` unless features require them
+- [ ] ❌ **Only import when used**: Do not import `_js_math`/`_js_random`/`_js_re`/`_js_time` unless features require them
 - [ ] ❌ Add tests that assert exact import header format
 - [ ] ❌ Add lint/test for "no unused imports"
 
-**Test:** Code using Math and String methods → `import math` at top (once)
+**Test:** Code using Math and String methods → `import math as _js_math` at top (once)
 **Test:** Code using multiple runtime features → `from js_compat import JSUndefined, js_truthy, console_log` (sorted)
-**Test:** Code without Math methods → no `import math` (no unused imports)
+**Test:** Code without Math methods → no `import math as _js_math` (no unused imports)
 **Test (all features):** Code using all features → verify deduping and ordering across stdlib and runtime imports (comprehensive import header test)
+**Test (collision):** `var math = 5; var random = 10; return Math.sqrt(math) + Math.random() * random;` → user vars and stdlib imports coexist
 
 ---
 
@@ -978,26 +1017,26 @@ switch (x) {
 
 ---
 
-### 4.9 Regex Literals
+### 4.9 Regex Literals (with 'g' flag support for String.replace)
 - [ ] ❌ Implement `compile_js_regex(pattern, flags_str)` in runtime:
-  - Map JS flags: `i` → `re.IGNORECASE`, `m` → `re.MULTILINE`, `s` → `re.DOTALL`
-  - Error on unsupported flags (`g`, `y`, `u`) with clear message explaining why
-  - Document: 'g' (global) flag not supported; Python re.findall() can be used as workaround
+  - Map JS flags using aliased import: `i` → `_js_re.IGNORECASE`, `m` → `_js_re.MULTILINE`, `s` → `_js_re.DOTALL`
+  - **SPECIAL CASE**: Allow 'g' flag ONLY when regex is used in `String.prototype.replace` context
+    - Track regex usage context during transformation
+    - If regex with 'g' is used in replace: compile WITHOUT 'g' flag (Python re doesn't use flags for global matching; use `count=0` in `.sub()`)
+    - If regex with 'g' is used elsewhere: error with message "Regex global flag 'g' is only supported in String.prototype.replace. Use Python's re.findall() for other cases."
+  - Error on unsupported flags (`y`, `u`) with clear message
   - Document: 'y' (sticky) and 'u' (unicode) flags not directly supported
   - **Ensure backslash escaping**: Pattern string must preserve backslashes (e.g., `\d`, `\w`, `\s`)
   - **CRITICAL**: Always emit Python raw strings `r'...'` for regex patterns unless impossible
     - This prevents double-escaping pitfalls
     - If pattern contains both ' and ", choose quote style or escape appropriately
-    - Document this policy: "Regex patterns always use Python raw strings (r'...') to preserve backslashes"
   - **CRITICAL**: Test escaped backslashes and raw vs cooked strings in final Python string literal
-    - Ensure Python gets same pattern bytes it expects
-    - Exact flags mapping and escaping strategy documented
-  - Return `re.compile(pattern, flags)`
-- [ ] ❌ Add `import re` via import manager
+  - Return `_js_re.compile(pattern, flags)` (using aliased import)
+- [ ] ❌ Add `import re as _js_re` via import manager
 - [ ] ❌ Transform regex `Literal` → `compile_js_regex(pattern, flags)`
   - Access pattern via `node.regex.pattern` (Acorn structure)
   - Access flags via `node.regex.flags` (Acorn structure)
-  - Acorn pre-processes pattern; ensure proper escaping in Python string
+  - Track context to determine if 'g' flag is allowed
 
 **Test:** `/hello/i` → `compile_js_regex('hello', 'i')` → case-insensitive regex
 
@@ -1005,11 +1044,13 @@ switch (x) {
 
 **Test:** `/[a-z]+/i` → character class works
 
-**Test:** `/test/g` → error with message "Regex global flag 'g' is not supported. Use Python's re.findall() or re.finditer() as a workaround."
+**Test:** `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace allowed in String.replace context)
 
-**Test:** `/test/y` → error with message "Regex sticky flag 'y' is not supported."
+**Test:** `/test/g.test('test')` → error "Regex global flag 'g' is only supported in String.prototype.replace."
 
-**Test:** `/test/u` → error with message "Regex unicode flag 'u' is not supported."
+**Test:** `/test/y` → error "Regex sticky flag 'y' is not supported."
+
+**Test:** `/test/u` → error "Regex unicode flag 'u' is not supported."
 
 ---
 
@@ -1120,14 +1161,25 @@ switch (x) {
 ### 5.1 Critical Test Requirements from Architect Feedback
 - [ ] ❌ **typeof undeclared**: `typeof undeclaredVar` → `'undefined'` without error
 - [ ] ❌ **void operator**: `void 0` → `JSUndefined`, `void (x = 5)` → evaluates assignment, returns `JSUndefined`
-- [ ] ❌ **For-update + continue with SequenceExpression**: `for(i=0; i<10; i++, j++) { if (cond) continue; }` → ensure both `i++` and `j++` execute on continue
+- [ ] ❌ **For-update + continue with SequenceExpression**: `for(var i=0, j=0; i<10; i++, j++) { if (i % 2) continue; }` → ensure both `i++` and `j++` execute on continue (critical for loop-ID tagging)
 - [ ] ❌ **For-update + continue in nested loops**: Verify only owning loop's update executes on continue (not inner loop's update)
+  ```javascript
+  for (var i = 0; i < 3; i++) {
+    for (var j = 0; j < 3; j++) {
+      if (j == 1) continue; // Only j++ should run, NOT i++
+    }
+  }
+  ```
 - [ ] ❌ **Member-target single-eval under augassign**: `obj()[key()] += f()` → evaluate `obj()` and `key()` exactly once
 - [ ] ❌ **Member-target single-eval under update**: `obj[key++]++` → evaluate `obj` and `key++` exactly once
 - [ ] ❌ **Regex escaping**: `\d` patterns preserved exactly, quotes chosen to avoid extra escaping
 - [ ] ❌ **Mixed equality in switch**: Cases with NaN, -0/+0, object literals (identity), primitives
 - [ ] ❌ **isNaN/isFinite**: `isNaN('abc')` → `true`, `isFinite('123')` → `true`, `isFinite(Infinity)` → `false`
 - [ ] ❌ **Date.now()**: Returns milliseconds since epoch as int
+- [ ] ❌ **Identifier sanitization**: `var class = 5;` → `class_js = 5`, `function from() {}` → `def from_js():`
+- [ ] ❌ **Stdlib import aliasing**: `var math = 42; return Math.sqrt(16) + math;` → verify user `math` and `_js_math` coexist
+- [ ] ❌ **Strict equality validator negative test**: Intentionally try to emit direct Python `==` for `===` → validator should catch and error
+- [ ] ❌ **Regex 'g' flag in String.replace**: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace works)
 
 ### 5.1 Golden Test Suite
 - [ ] ❌ Create `tests/golden/` directory with JS input files and expected Python output
@@ -1228,8 +1280,11 @@ switch (x) {
 
 ### 5.7 Documentation
 - [ ] ❌ Update README.md with usage instructions, examples, supported subset
-- [ ] ❌ **Document Python version requirement: Python ≥ 3.8** (for walrus operator in logical expressions; fallback available for 3.7 if needed)
-- [ ] ❌ **Pin versions**: Document Node.js version (e.g., Node 18 LTS) and Python version (≥3.8) for CI and execution parity tests
+- [ ] ❌ **Document Python version requirement: Python ≥ 3.8 REQUIRED**
+  - Walrus operator used for logical expressions and assignment-in-expression contexts
+  - No fallback to Python 3.7 (simplifies implementation)
+  - Add to README: "Requires Python ≥ 3.8"
+- [ ] ❌ **Pin versions**: Document Node.js version (e.g., Node 18 LTS) and Python version (≥ 3.8) for CI and execution parity tests
 - [ ] ❌ Document runtime library API with exact function signatures and behavior
 - [ ] ❌ **Add performance note**: "This demo prioritizes correctness over speed; runtime helpers add overhead by design."
 - [ ] ❌ **Add "Unsupported but common patterns" troubleshooting table**:
