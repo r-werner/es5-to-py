@@ -19,8 +19,8 @@ Before implementing, ensure these key semantic issues are addressed:
 3. **Global identifiers (NaN, Infinity, undefined)**:
    - Map `undefined` identifier → `JSUndefined`
    - Map `NaN` identifier → `float('nan')`
-   - Map `Infinity` identifier → `math.inf`
-   - Map `-Infinity` → `-math.inf` (handle unary minus on Infinity)
+   - Map `Infinity` identifier → `_js_math.inf` (use aliased import to avoid collisions)
+   - Map `-Infinity` → `-_js_math.inf` (handle unary minus on Infinity)
 
 4. **Return without expression**: `return;` (bare return) must emit `return JSUndefined` (NOT Python's implicit `None`). JS `return;` yields `undefined`, not `null`.
 
@@ -38,6 +38,7 @@ Before implementing, ensure these key semantic issues are addressed:
 8. **Augmented assignment semantics**:
    - `+=` must use `js_add(lhs, rhs)` (string concatenation if either operand is string)
    - **LOCKED DECISION**: `-=`, `*=`, `/=`, `%=` are **numeric-only**; error with code `E_NUM_AUGMENT_COERCION` on type mismatches
+   - **Implementation detail**: For numeric-only ops, emit simple Python arithmetic operators (no runtime wrapper needed), but still enforce single-eval of member targets with temps
    - Simplifies runtime and reduces edge-case bugs; full ToNumber coercion not in scope
 
 9. **delete on arrays**: Python `del` shifts elements; JS leaves holes. Assign `JSUndefined` at index instead of deleting.
@@ -166,6 +167,33 @@ Before implementing, ensure these key semantic issues are addressed:
    - Only primitives + null/undefined rules are supported in `js_loose_eq`
    - Document exact supported subset in runtime docstring
 
+32. **typeof undeclared identifier special case**: ES5 allows `typeof undeclaredVar` without ReferenceError.
+   - **CRITICAL**: Unresolved identifier pre-pass must NOT error on `typeof <Identifier>` usage
+   - Pattern: Detect `UnaryExpression` with operator `typeof` and argument `Identifier`
+   - Transform `typeof undeclaredVar` → `'undefined'` (literal string, not runtime call)
+   - Add test: `typeof undeclaredVariable` → `'undefined'` (no error, no reference to undeclaredVariable)
+   - All other undeclared identifier usage still errors with `E_UNRESOLVED_IDENTIFIER`
+
+33. **void operator support**: `void expr` evaluates `expr` for side effects and returns `undefined`.
+   - Transform `void expr` → evaluate `expr` (for side effects), then return `JSUndefined`
+   - Pattern: Statement context: `expr; result = JSUndefined`. Expression context: use walrus `(expr, JSUndefined)[-1]` or similar
+   - Common usage: `void 0` → `JSUndefined` (idiomatic way to get undefined)
+   - Add test: `void 0` → `JSUndefined`, `void f()` → calls `f()` and returns `JSUndefined`
+
+34. **Function declarations inside blocks (Annex B behavior)**: ES5 allows function declarations in blocks, but behavior is implementation-dependent.
+   - **DECISION**: Disallow function declarations inside blocks (if/while/for bodies) for clarity
+   - Add validator pass to detect `FunctionDeclaration` inside block statement (not at top level or function body top level)
+   - Error code: `E_FUNCTION_IN_BLOCK`
+   - Message: "Function declarations inside blocks are not supported. Move function declaration to top level or use function expression: var name = function() {...};"
+   - Rationale: Avoids Annex B edge cases; promotes clearer code
+   - Add test: `if (true) { function f() {} }` → error with migration hint
+
+35. **Date.now() support**: Common real-world usage for timestamps.
+   - Map `Date.now()` → `js_date_now()` runtime helper
+   - Runtime: `js_date_now()` → `int(_js_time.time() * 1000)` (milliseconds since epoch)
+   - Requires aliased import: `import time as _js_time`
+   - Add test: `Date.now()` → returns integer timestamp in milliseconds
+
 ---
 
 ## Phase 1: Skeleton + Core Expressions/Statements
@@ -242,10 +270,10 @@ Before implementing, ensure these key semantic issues are addressed:
 ### 1.4 Literals and Basic Expressions
 - [ ] ❌ Transform `Literal` nodes (string, number, boolean, null → None, regex → defer to Phase 4)
 - [ ] ❌ Transform `Identifier` nodes:
-  - **CRITICAL**: Map global identifiers: `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `math.inf`
-  - Regular identifiers → direct mapping (no renaming)
-  - Add `import math` via import manager when `Infinity` is used
-  - Handle unary minus on `Infinity`: `-Infinity` → `-math.inf` (needs UnaryExpression handling)
+  - **CRITICAL**: Map global identifiers: `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `_js_math.inf`
+  - Regular identifiers → apply sanitization for Python keyword collisions (via `sanitizeIdentifier`)
+  - Add aliased import `import math as _js_math` via import manager when `Infinity` is used
+  - Handle unary minus on `Infinity`: `-Infinity` → `-_js_math.inf` (needs UnaryExpression handling)
 - [ ] ❌ Transform `ArrayExpression` → Python `List` AST node
 - [ ] ❌ Transform `ObjectExpression` → Python `Dict` AST node
   - Support identifier keys: `{a: 1}` → `{'a': 1}`
@@ -1350,34 +1378,34 @@ switch (x) {
   - "Use Math.floor() instead of bitwise OR `| 0` to truncate"
   - "Use explicit for-loop instead of .map()/.filter()/.reduce()"
   - "Use strict equality (===) instead of loose equality (==) for objects"
-  - "Refactor comma expressions to separate statements or use --use-walrus"
 - [ ] ❌ Document known limitations:
-  - **Python ≥ 3.8 recommended** (walrus operator for logical expressions; 3.7 fallback available but verbose)
+  - **Python ≥ 3.8 required** (walrus operator `:=` is mandatory; no fallback mode)
   - **Return semantics**: `return;` (bare return) yields `undefined`, not `null`
-  - **SequenceExpression**: Comma operator `(a, b, c)` supported
+  - **SequenceExpression**: Comma operator `(a, b, c)` supported in all contexts (using walrus operator)
   - **Strict equality**: -0 vs +0 distinction not implemented (acceptable for demo; `-0 === +0` is `true`)
   - **Augmented assignment**: `+=` uses JS semantics (string concat); `-=`/`*=`/`/=`/`%=` are numeric-only (error on type mismatch)
   - **Math.round**: .5 behavior differs (Python uses banker's rounding; avoid .5 inputs or use js_round shim)
-  - **JSDate timezone**: Uses UTC for predictability (document this clearly)
+  - **JSDate timezone**: Uses UTC for predictability
   - **Loose equality**: ToPrimitive on objects not supported; only primitives supported
   - **Nested function hoisting**: Not supported (call-after-definition only)
+  - **Function declarations in blocks**: Not supported (Annex B); use function expressions instead
   - **No try/catch**: throw raises JSException but cannot be caught in transpiled code
   - **Switch fall-through**: Between non-empty cases not supported (must use explicit break)
-  - **Regex flags**: g, y, u not supported (workarounds: re.findall, etc.)
+  - **Regex flags**: `g` flag allowed ONLY in `String.prototype.replace` context; `y`, `u` not supported (workarounds: re.findall, etc.)
   - **No closure support**: Beyond lexical nesting (captured variables not mutable across scopes)
   - **Delete on identifiers**: Not supported (error)
-  - **For-in enumeration order**: Insertion order for objects, ascending numeric for arrays (ES5 order is implementation-quirky; this is acceptable for demo and may differ from some engines; document as "behavior may differ")
+  - **For-in enumeration order**: Insertion order for objects, ascending numeric for arrays (ES5 order is implementation-quirky; behavior may differ from some engines)
   - **Method calls requiring 'this'**: Not supported unless recognized standard library method
   - **Bitwise operators**: All bitwise ops (`|`, `&`, `^`, `~`, `<<`, `>>`, `>>>`) not supported
-  - **Array methods**: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc. not supported
+  - **Array methods**: `push` (single arg), `pop` supported; `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc. not supported
   - **Object methods**: `Object.keys`, `Object.values`, `Object.assign`, etc. not supported
-  - **Regex methods**: `match`, `exec` not supported; use `.test()` or Python re module
-  - **SequenceExpression limits**: In statement-temp mode, limited to for-init/update; use --use-walrus for general support
-  - **Assignment-in-expression**: Statement-temp lifting default; use --use-walrus for inline pattern
+  - **Regex methods**: `match`, `exec` not supported; `.test()` and `.replace()` supported
   - **'in' operator**: Out of scope (property existence checking); error with workaround
   - **'instanceof' operator**: Out of scope; error
   - **void operator**: Supported; `void expr` evaluates expr and returns `undefined`
+  - **typeof undeclared**: Supported; `typeof undeclaredVar` returns `'undefined'` without error
   - **Global functions**: `isNaN`, `isFinite` supported via runtime helpers; `parseInt`, `parseFloat`, `Number()`, `String()`, `Boolean()`, `RegExp()` not supported (error with alternatives)
+  - **Date.now()**: Supported; returns milliseconds since epoch
 - [ ] ❌ Provide migration guide (unsupported features and alternatives)
 - [ ] ❌ Document arithmetic coercion strategy decision (numeric-only recommended for demo)
   - Exact coercion tables in runtime docstrings (strings with leading/trailing whitespace, empty string, hex/octal forms if supported)

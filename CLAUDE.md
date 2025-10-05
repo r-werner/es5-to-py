@@ -41,9 +41,9 @@ These are the most critical correctness requirements that are easy to violate. *
 - JS bare return yields `undefined`, not `null`
 
 ### 4. **Walrus Operator Strategy (Python ≥ 3.8 Required)**
-- Assignment in expression context uses walrus operator: `if (x = y)` → `if (x := y)`
+- Assignment in expression context uses walrus operator: `if (x = y)` → `if js_truthy(x := y)`
 - Logical operators use walrus for single-eval: `a && b` → `(b if js_truthy(_temp := a) else _temp)`
-- SequenceExpression supported in all contexts
+- SequenceExpression supported in all contexts (using walrus operator)
 - No fallback mode; Python 3.8+ is mandatory
 
 ### 5. **Member Access Always Uses Subscript**
@@ -125,9 +125,13 @@ arr[1] = JSUndefined
 **Out of scope (fail fast with error codes):**
 - `this`, prototypes, classes, `let`/`const`, closures beyond lexical nesting
 - `try`/`catch`/`finally`, `with`, `for..of`, dynamic object keys
-- Bitwise operators, array/object methods (`push`, `map`, `Object.keys`, etc.)
-- `in` operator, `instanceof` operator
+- Function declarations inside blocks (Annex B behavior)
+- Bitwise operators
+- Array methods: `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc. (only `push` single-arg and `pop` supported)
+- Object methods: `Object.keys`, `Object.values`, `Object.assign`, etc.
 - Regex methods `match`/`exec` (only `.test()` and `.replace()` supported)
+- Regex `g` flag (allowed ONLY in `String.prototype.replace` context)
+- `in` operator, `instanceof` operator
 - See IMPLEMENTATION.md for complete list with error codes
 
 ## Key Transformation Rules
@@ -142,12 +146,16 @@ arr[1] = JSUndefined
 - **Switch**: Transform to `while True` block; static validation detects fall-through
 
 ### Built-in Mappings
-- **Math**: Map to Python `math` module or built-ins (`Math.sqrt(x)` → `math.sqrt(x)`)
+- **Math**: Map to aliased Python `math` module (`Math.sqrt(x)` → `_js_math.sqrt(x)`, `Infinity` → `_js_math.inf`)
 - **String**: Map methods with edge cases (`charAt(i)` → `str[i:i+1]`)
+- **Date**: `new Date()` → `JSDate()`, `Date.now()` → `js_date_now()` (milliseconds since epoch)
+- **Array**: `push(x)` → `append(x)` (single arg only), `pop()` → `pop()`
 - **Operators**: `+` → `js_add()`, `%` → `js_mod()`, `===` → `js_strict_eq()`, `==` → `js_loose_eq()`
+- **Special**: `void expr` → evaluate expr, return `JSUndefined`; `typeof undeclaredVar` → `'undefined'` (no error)
 
 ### Import Management
-- Deterministic order: stdlib first (`math`, `random`, `re`), then runtime imports
+- **Aliased imports** to avoid collisions: `import math as _js_math`, `import random as _js_random`, `import re as _js_re`, `import time as _js_time`
+- Deterministic order: stdlib first (aliased), then runtime imports
 - No unused imports
 
 ## Where to Find What
