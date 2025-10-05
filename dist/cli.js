@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import { parseJS } from './parser.js';
 import { Transformer } from './transformer.js';
+import { ImportManager } from './import-manager.js';
 import { generatePython } from './generator.js';
 function main() {
     const args = process.argv.slice(2);
@@ -13,10 +14,14 @@ function main() {
     try {
         const source = fs.readFileSync(inputFile, 'utf8');
         const jsAst = parseJS(source);
-        const transformer = new Transformer();
+        const importManager = new ImportManager();
+        const transformer = new Transformer(importManager);
         const pythonAst = transformer.transform(jsAst);
         const pythonCode = generatePython(pythonAst);
-        console.log(pythonCode);
+        // Prepend imports
+        const imports = importManager.emitHeader();
+        const output = imports ? `${imports}\n\n${pythonCode}` : pythonCode;
+        console.log(output);
     }
     catch (error) {
         console.error(`Error: ${error.message}`);

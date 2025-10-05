@@ -5,6 +5,7 @@ export declare class ImportManager {
     addStdlib(name: StdlibName): void;
     addRuntime(name: string): void;
     generateImports(): string[];
+    emitHeader(): string;
 }
 export {};
 //# sourceMappingURL=import-manager.d.ts.map

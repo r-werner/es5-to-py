@@ -1,8 +1,9 @@
 # S2: Core Expressions I
 
-**Status**: ❌ Not Started
+**Status**: ✅ Complete (2025-10-05)
 **Dependencies**: S0, S1
 **Estimated Effort**: 3-4 days
+**Actual Effort**: < 1 day
 
 ---
 
@@ -610,17 +611,17 @@ x ? 1 : 0;
 
 ## Done Criteria
 
-- [ ] `visitLiteral` handles string, number, boolean, null
-- [ ] `visitIdentifier` handles global mappings and sanitization
-- [ ] `visitArrayExpression` and `visitObjectExpression` implemented
-- [ ] `visitMemberExpression` uses subscript access (`.length` → `len()`)
-- [ ] `visitBinaryExpression` implements `===`, `!==`, comparison ops
-- [ ] `visitLogicalExpression` uses walrus operator for single-eval
-- [ ] `visitUnaryExpression` handles `!`, `-`, `-Infinity`
-- [ ] `visitConditionalExpression` wraps test with `js_truthy()`
-- [ ] `js_strict_eq()` and `js_strict_neq()` runtime helpers added
-- [ ] All acceptance tests pass
-- [ ] Import manager tracks `JSUndefined`, `js_truthy`, `js_strict_eq`, `_js_math`
+- [x] `visitLiteral` handles string, number, boolean, null
+- [x] `visitIdentifier` handles global mappings and sanitization
+- [x] `visitArrayExpression` and `visitObjectExpression` implemented
+- [x] `visitMemberExpression` uses subscript access (`.length` → `len()`)
+- [x] `visitBinaryExpression` implements `===`, `!==`, comparison ops
+- [x] `visitLogicalExpression` uses walrus operator for single-eval
+- [x] `visitUnaryExpression` handles `!`, `-`, `-Infinity`
+- [x] `visitConditionalExpression` wraps test with `js_truthy()`
+- [x] `js_strict_eq()` and `js_strict_neq()` runtime helpers added
+- [x] All acceptance tests pass (38/38 tests)
+- [x] Import manager tracks `JSUndefined`, `js_truthy`, `js_strict_eq`, `_js_math`
 
 ---
 

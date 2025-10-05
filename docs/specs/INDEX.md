@@ -58,9 +58,10 @@ S0 (Foundations)
 
 ---
 
-### ❌ S2: Core Expressions I
+### ✅ S2: Core Expressions I
 **File**: `S2_expressions_i.md`
 **Dependencies**: S0, S1
+**Status**: Complete (2025-10-05)
 **Deliverables**:
 - `Literal` nodes (string, number, boolean, null → `None`)
 - `Identifier` nodes with global mappings (`undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `math.inf`)
@@ -73,6 +74,7 @@ S0 (Foundations)
 - Ternary (`?:`)
 
 **Estimated effort**: 3-4 days
+**Actual effort**: < 1 day
 
 ---
 
@@ -241,7 +243,7 @@ Update this section as specs are completed:
 
 - [x] S0: Foundations + Runtime Core ✅ (2025-01-05)
 - [x] S1: Pipeline Skeleton ✅ (2025-10-05)
-- [ ] S2: Core Expressions I
+- [x] S2: Core Expressions I ✅ (2025-10-05)
 - [ ] S3: Assignment + Functions
 - [ ] S4: Control Flow I
 - [ ] S5: For + Sequence + Update
@@ -250,6 +252,6 @@ Update this section as specs are completed:
 - [ ] S8: Regex + Type Ops + Loose Eq
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: S0 and S1 complete, ready for S2
+**Current Status**: S0, S1, and S2 complete, ready for S3
 **Last Updated**: 2025-10-05
-**Progress**: 2/9 specs complete (22%)
+**Progress**: 3/9 specs complete (33%)

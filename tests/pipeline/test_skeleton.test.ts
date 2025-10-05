@@ -86,18 +86,29 @@ describe('Pipeline Skeleton', () => {
   });
 
   test('Temp allocator generates unique names', () => {
-    const transformer = new Transformer();
+    const mgr = new ImportManager();
+    const transformer = new Transformer(mgr);
     expect(transformer.allocateTemp()).toBe('__js_tmp1');
     expect(transformer.allocateTemp()).toBe('__js_tmp2');
     expect(transformer.allocateTemp()).toBe('__js_tmp3');
   });
 
-  test('Transformer throws on unsupported nodes', () => {
-    const transformer = new Transformer();
+  test('Transformer handles single expression statements (S2)', () => {
+    const mgr = new ImportManager();
+    const transformer = new Transformer(mgr);
     const ast = parseJS('42');
 
+    // S2 adds minimal Program support for single expressions
+    expect(() => transformer.transform(ast)).not.toThrow();
+  });
+
+  test('Transformer throws on multi-statement programs', () => {
+    const mgr = new ImportManager();
+    const transformer = new Transformer(mgr);
+    const ast = parseJS('var x = 1; var y = 2;');
+
     expect(() => transformer.transform(ast)).toThrow(UnsupportedNodeError);
-    expect(() => transformer.transform(ast)).toThrow(/Program transformation not yet implemented/);
+    expect(() => transformer.transform(ast)).toThrow(/Program with multiple statements not yet implemented/);
   });
 
   test('Walrus operator (NamedExpr) can be unparsed by py-ast', async () => {
