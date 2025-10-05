@@ -8,7 +8,7 @@
 
 Before implementing, ensure these key semantic issues are addressed:
 
-1. **Python version requirement**: Requires Python ≥ 3.8 for walrus operator (`:=`) in logical expressions. Document this clearly.
+1. **Python version requirement**: Python ≥ 3.7 supported (statement-temp mode is default). Python ≥ 3.8 required only for optional `--use-walrus` mode. Document this clearly.
 
 2. **Strict equality for objects/arrays/functions**:
    - **CRITICAL BUG**: Python `==` uses value equality; JS `===` uses identity for objects
@@ -513,9 +513,13 @@ Before implementing, ensure these key semantic issues are addressed:
   - Allow consecutive empty cases (case aliases)
   - **Detect subtle case**: "non-empty case → empty alias case(s) → non-empty case without break" as invalid
 - [ ] ❌ Transform `SwitchStatement` to `while True:` wrapper
+- [ ] ❌ **CRITICAL**: Evaluate discriminant once and cache in temp variable
+  - Pattern: `_switch_disc = discriminant_expr; while True: if js_strict_eq(_switch_disc, case1): ...`
+  - This prevents re-evaluation if discriminant has side effects or if cases mutate referenced variables
+  - Ensures correct semantics when discriminant is an expression with side effects
 - [ ] ❌ Build nested `if/elif/else` for cases
 - [ ] ❌ **CRITICAL**: Use strict equality (`js_strict_eq`) for ALL case matching
-  - Generate `js_strict_eq(discriminant, case_value)` (NOT Python `==`)
+  - Generate `js_strict_eq(_switch_disc, case_value)` (NOT Python `==`)
   - This matches JS switch semantics (strict comparison, identity for objects)
   - Ensures `switch (x) { case {}: ... }` doesn't match a different object literal
   - Add unit test matrix for object/array/function identity, NaN, null/undefined, primitive cases in switch
@@ -548,6 +552,8 @@ switch (x) {
 **Test (case alias chain validation):** `switch(x) { case 1: case 2: case 3: stmt; break; }` → valid (alias chain ends in non-empty case with break)
 
 **Test (case alias chain error):** `switch(x) { case 1: case 2: stmt1; case 3: stmt2; break; }` → error (alias chain has non-empty case without break before next case)
+
+**Test (switch discriminant caching):** `var i = 0; switch(i++) { case 0: i = 10; case 1: return i; }` → discriminant evaluated once at switch entry (i++ happens once); verify with side-effect test
 
 ---
 
@@ -852,7 +858,18 @@ switch (x) {
 
 ---
 
-### 4.6 Delete Operator
+### 4.6 In Operator (out of scope)
+- [ ] ❌ **DECISION**: `in` operator is **out of scope** for this demo
+  - JS `in` checks property existence: `'prop' in obj`, `'1' in arr`
+  - Complex semantics: prototype chain traversal, numeric string keys, array holes
+  - Error with code `E_IN_OPERATOR_UNSUPPORTED`
+  - Message: "'in' operator is not supported. Use explicit property checks (obj['prop'] !== JSUndefined) or Object.hasOwnProperty()."
+  - Remove any tests that rely on `in` operator
+  - Add error test: `'1' in arr` → error with clear message
+
+---
+
+### 4.7 Delete Operator
 - [ ] ❌ Implement `js_delete(base, key)` in runtime:
   - Dict: `del base[key]` if key exists, return `True`; if key doesn't exist, still return `True` (no error)
   - **List/Array**: **DO NOT use `del`** (Python shifts elements, JS leaves hole)
@@ -871,7 +888,7 @@ switch (x) {
 **Test:** `delete obj.prop` → `js_delete(obj, 'prop')` (dict key removed)
 **Test:** `delete arr[1]` → `arr[1] = JSUndefined` (hole created, length unchanged)
 **Test:** `var arr = [1,2,3]; delete arr[1]; arr.length` → should be 3, `arr[1]` is JSUndefined
-**Test:** Chained behaviors: `var arr = [1,2,3]; delete arr[1]; arr.length; '1' in arr; for (var i in arr) ...` → verify holes persist and for-in skips them
+**Test:** Chained behaviors: `var arr = [1,2,3]; delete arr[1]; arr.length; for (var i in arr) ...` → verify holes persist and for-in skips them
 **Test:** `delete obj.nonExistent` → `True` (no error, returns true for non-existent keys)
 **Test:** `delete arr[999]` → `True` (out-of-range index still returns true, doesn't crash)
 
@@ -879,17 +896,37 @@ switch (x) {
 
 ---
 
-### 4.7 Regex Literals
+### 4.8 Unresolved Identifier Pre-pass
+- [ ] ❌ Add pre-pass to detect reads of undeclared identifiers
+  - Traverse AST and build symbol table of declared variables (var, function params)
+  - Error on reads of identifiers that are not:
+    - Declared in current or parent scope
+    - Global identifiers (NaN, Infinity, undefined)
+    - Standard library (Math, String, Date, console, etc.)
+  - Error code: `E_UNRESOLVED_IDENTIFIER`
+  - Message: "Identifier 'X' is not declared. JavaScript would throw ReferenceError."
+  - Helps catch typos and ensures clean transpiled code
+
+**Test:** `function f() { return undeclaredVar; }` → error: "Identifier 'undeclaredVar' is not declared"
+**Test:** `function f() { var x = 1; return x; }` → OK (declared)
+**Test:** `function f() { return Math.sqrt(4); }` → OK (Math is standard library)
+
+---
+
+### 4.9 Regex Literals
 - [ ] ❌ Implement `compile_js_regex(pattern, flags_str)` in runtime:
   - Map JS flags: `i` → `re.IGNORECASE`, `m` → `re.MULTILINE`, `s` → `re.DOTALL`
   - Error on unsupported flags (`g`, `y`, `u`) with clear message explaining why
   - Document: 'g' (global) flag not supported; Python re.findall() can be used as workaround
   - Document: 'y' (sticky) and 'u' (unicode) flags not directly supported
   - **Ensure backslash escaping**: Pattern string must preserve backslashes (e.g., `\d`, `\w`, `\s`)
+  - **CRITICAL**: Always emit Python raw strings `r'...'` for regex patterns unless impossible
+    - This prevents double-escaping pitfalls
+    - If pattern contains both ' and ", choose quote style or escape appropriately
+    - Document this policy: "Regex patterns always use Python raw strings (r'...') to preserve backslashes"
   - **CRITICAL**: Test escaped backslashes and raw vs cooked strings in final Python string literal
     - Ensure Python gets same pattern bytes it expects
     - Exact flags mapping and escaping strategy documented
-    - Specify how Python string literal is represented (raw `r'...'` vs escaped `'...'`) to keep backslashes intact
   - Return `re.compile(pattern, flags)`
 - [ ] ❌ Add `import re` via import manager
 - [ ] ❌ Transform regex `Literal` → `compile_js_regex(pattern, flags)`
@@ -911,7 +948,19 @@ switch (x) {
 
 ---
 
-### 4.8 JSDate Class
+### 4.10 Temp Allocator API Contract
+- [ ] ❌ Define temp allocator utility with clear contract to avoid name collisions
+  - **Prefix**: Use `__js_tmp` prefix (double underscore to avoid user code collisions)
+  - **Uniqueness**: Increment counter per temp: `__js_tmp1`, `__js_tmp2`, etc.
+  - **Scoping**: Allocate temps at statement level; reset counter per function
+  - **Naming contract**: Document in transformer that user code should not use `__js_tmp*` names
+  - **Switch discriminant temp**: Use `__js_switch_disc_<id>` for switch discriminants (unique per switch)
+  - **Logical expression temps**: Use `__js_tmp<n>` for logical short-circuit temps
+  - Document this convention to avoid regressions
+
+---
+
+### 4.11 JSDate Class
 - [ ] ❌ Implement `class JSDate` in runtime:
   - Constructor overloads: `JSDate()` → current time, `JSDate(ms)` → from timestamp, `JSDate(year, month, ...)` → construct date
   - **Timezone decision**: Use UTC for predictability (document this clearly)
@@ -933,7 +982,7 @@ switch (x) {
 
 ---
 
-### 4.9 For-in Runtime Helper (if not done in Phase 2)
+### 4.12 For-in Runtime Helper (if not done in Phase 2)
 - [ ] ❌ Verify `js_for_in_keys(x)` implementation:
   - Dict → yield keys as-is
   - List → yield indices as strings ('0', '1', ...)
@@ -944,7 +993,7 @@ switch (x) {
 
 ---
 
-### 4.10 Throw Statement
+### 4.13 Throw Statement
 - [ ] ❌ Transform `ThrowStatement` → `raise JSException(value)`
 - [ ] ❌ Verify JSException stores arbitrary values
 
@@ -952,7 +1001,7 @@ switch (x) {
 
 ---
 
-### 4.11 Optional Helpers (Nice-to-Have)
+### 4.14 Optional Helpers (Nice-to-Have)
 - [ ] ❌ Optional: Implement `js_round(x)` for exact JS Math.round parity (banker's rounding differs)
   - JS: 0.5 rounds up to 1, -0.5 rounds toward zero to -0
   - Python: banker's rounding (round half to even)
@@ -963,7 +1012,7 @@ switch (x) {
 
 ---
 
-### 4.12 Phase 4 Integration Tests
+### 4.15 Phase 4 Integration Tests
 - [ ] ❌ Test strict equality for objects/arrays: `{} === {}` → `False`, `var a = {}; a === a` → `True`
 - [ ] ❌ Test strict equality for primitives: `5 === 5` → `True`, `'5' === 5` → `False`
 - [ ] ❌ Test NaN strict equality: `NaN === NaN` → `False`
@@ -1060,6 +1109,12 @@ switch (x) {
 - [ ] ❌ Test: `break` outside loop/switch → error from ancestry validation
 - [ ] ❌ Test: `continue` outside loop → error from ancestry validation
 - [ ] ❌ Test: Computed object keys → error
+- [ ] ❌ Test: `in` operator → error with code `E_IN_OPERATOR_UNSUPPORTED`
+  - `'1' in arr` → error: "'in' operator is not supported. Use explicit property checks (obj['prop'] !== JSUndefined)."
+- [ ] ❌ Test: `instanceof` operator → error with code `E_INSTANCEOF_UNSUPPORTED`
+  - `obj instanceof Date` → error: "'instanceof' operator is not supported."
+- [ ] ❌ Test: Unresolved identifier → error with code `E_UNRESOLVED_IDENTIFIER`
+  - `function f() { return undeclaredVar; }` → error: "Identifier 'undeclaredVar' is not declared. JavaScript would throw ReferenceError."
 - [ ] ❌ Test: Switch fall-through between non-empty cases → error from static validator with location
 - [ ] ❌ Test: Regex unsupported flags (g, y, u) → error with workaround suggestion
 - [ ] ❌ Test: Nested function called before definition → error: "Nested function hoisting is not supported. Define function 'X' before calling it."
@@ -1111,6 +1166,9 @@ switch (x) {
   - `E_REGEX_METHOD_UNSUPPORTED`: Regex method not supported
   - `E_LOOSE_EQ_OBJECT`: Loose equality with objects/arrays not supported
   - `E_SEQUENCE_EXPR_CONTEXT`: SequenceExpression in unsupported context
+  - `E_IN_OPERATOR_UNSUPPORTED`: 'in' operator not supported
+  - `E_UNRESOLVED_IDENTIFIER`: Undeclared identifier
+  - `E_INSTANCEOF_UNSUPPORTED`: 'instanceof' operator not supported
   - Others as needed
 - [ ] ❌ **Add troubleshooting section**: Map common patterns to alternatives
   - "Use Math.floor() instead of bitwise OR `| 0` to truncate"
@@ -1132,7 +1190,7 @@ switch (x) {
   - **Regex flags**: g, y, u not supported (workarounds: re.findall, etc.)
   - **No closure support**: Beyond lexical nesting (captured variables not mutable across scopes)
   - **Delete on identifiers**: Not supported (error)
-  - **For-in enumeration order**: Insertion order for objects, ascending numeric for arrays (ES5 order is implementation-quirky)
+  - **For-in enumeration order**: Insertion order for objects, ascending numeric for arrays (ES5 order is implementation-quirky; this is acceptable for demo and may differ from some engines; document as "behavior may differ")
   - **Method calls requiring 'this'**: Not supported unless recognized standard library method
   - **Bitwise operators**: All bitwise ops (`|`, `&`, `^`, `~`, `<<`, `>>`, `>>>`) not supported
   - **Array methods**: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc. not supported
@@ -1140,6 +1198,8 @@ switch (x) {
   - **Regex methods**: `match`, `exec` not supported; use `.test()` or Python re module
   - **SequenceExpression limits**: In statement-temp mode, limited to for-init/update; use --use-walrus for general support
   - **Assignment-in-expression**: Statement-temp lifting default; use --use-walrus for inline pattern
+  - **'in' operator**: Out of scope (property existence checking); error with workaround
+  - **'instanceof' operator**: Out of scope; error
 - [ ] ❌ Provide migration guide (unsupported features and alternatives)
 - [ ] ❌ Document arithmetic coercion strategy decision (numeric-only recommended for demo)
   - Exact coercion tables in runtime docstrings (strings with leading/trailing whitespace, empty string, hex/octal forms if supported)
@@ -1219,7 +1279,8 @@ switch (x) {
 - **Break/Continue validation**: Pre-pass tags nodes with loop/switch ancestry for better diagnostics
 - **Switch fall-through**: Static validator detects non-empty fall-through and errors early
 - **Console.log**: Map to runtime `console_log()` function (not direct `print`)
-- **Imports**: Deterministic order (stdlib first: math, random, re; then runtime imports sorted); no unused imports
+- **Imports**: Deterministic order (stdlib first: math, random, re; then runtime imports sorted); no unused imports; test for unused imports
+- **Temp naming**: Use `__js_tmp<n>` prefix for all temps; `__js_switch_disc_<id>` for switch discriminants; document to avoid collisions
 - **Nested functions**: Lexically scoped but NOT hoisted (call-after-definition only; error otherwise)
 - **No try/catch**: Out of scope; throw raises JSException but cannot be caught
 - **Delete on identifiers**: ERROR (recommended; consistent in transformer + runtime)
@@ -1227,5 +1288,7 @@ switch (x) {
 - **Bitwise operators**: Out of scope; error with alternatives suggested
 - **Array/Object methods**: Out of scope; error with manual loop alternatives
 - **Regex usage**: `.test()` and `.replace()` supported; `.match()`/`.exec()` out of scope
+- **Regex escaping**: Always use Python raw strings `r'...'` for patterns to avoid double-escaping
+- **Unresolved identifiers**: Pre-pass detects undeclared variables; error early (prevents ReferenceError-like bugs)
 
 **Progress Tracking:** Update checkboxes as you complete tasks. Change ❌ → 🔄 when starting, 🔄 → ✅ when done.
