@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Quick Reference
 
-- **Detailed implementation plan**: See `IMPLEMENTATION.md` for phase-by-phase tasks, checklists, and acceptance criteria
+- **Implementation roadmap**: See `docs/specs/INDEX.md` for milestone overview and dependency graph
+- **Milestone specs**: See `docs/specs/S0_foundations.md` through `S9_cli_tests_docs.md` for self-contained implementation guides
+- **Original detailed plan**: See `IMPLEMENTATION.md` (kept as reference; superseded by split specs)
 - **Transformation rules**: See `plan.md` for complete mapping rules
 - **Python requirement**: Python ≥ 3.8 (walrus operator `:=` is required for assignment-in-expression and logical operators)
 
@@ -174,22 +176,44 @@ return class_js
 
 | Need | Location |
 |------|----------|
-| Phase-by-phase implementation tasks | `IMPLEMENTATION.md` Phases 1-5 |
-| Critical correctness requirements (complete list) | `IMPLEMENTATION.md` Critical Correctness section |
-| Detailed transformation rules | `plan.md` Section 4 |
-| Runtime API specifications | `IMPLEMENTATION.md` Phase 4 |
-| Test requirements and golden tests | `IMPLEMENTATION.md` Phase 5 |
-| Error codes and messages | `IMPLEMENTATION.md` Critical Correctness #19 and Phase 5.4 |
-| Known limitations | `IMPLEMENTATION.md` Phase 5.7 |
-| Math/String mapping tables | `plan.md` Section 5 |
+| **Implementation roadmap** | `docs/specs/INDEX.md` |
+| **Milestone specs (S0-S9)** | `docs/specs/S0_foundations.md` through `S9_cli_tests_docs.md` |
+| Foundations & runtime helpers | `docs/specs/S0_foundations.md` |
+| Pipeline skeleton (parser, transformer, generator) | `docs/specs/S1_pipeline.md` |
+| Core expressions & operators | `docs/specs/S2_expressions_i.md` |
+| Assignment & functions | `docs/specs/S3_assignment_functions.md` |
+| Control flow (if/while/break/continue) | `docs/specs/S4_control_flow_i.md` |
+| For-loops, sequence expressions, update expressions | `docs/specs/S5_for_sequence_update.md` |
+| Switch & for-in | `docs/specs/S6_switch_forin.md` |
+| Library mappings (Math, String, Date, console) | `docs/specs/S7_library_methods.md` |
+| Regex, typeof, delete, loose equality | `docs/specs/S8_regex_typeops_looseeq.md` |
+| CLI, tests, documentation | `docs/specs/S9_cli_tests_docs.md` |
+| **Detailed transformation rules** | `plan.md` Section 4 |
+| **Math/String mapping tables** | `plan.md` Section 5 |
+| **Original monolithic plan (reference)** | `IMPLEMENTATION.md` (superseded by split specs) |
 
-## Implementation Workflow
+## Development Workflow
 
-1. **Start here**: Read Critical Correctness Requirements in IMPLEMENTATION.md (lines 7-190)
-2. **Follow phases**: IMPLEMENTATION.md Phases 1-5 for step-by-step tasks
-3. **Check mappings**: plan.md for complete transformation tables
-4. **Track progress**: Update checkboxes in IMPLEMENTATION.md (❌ → 🔄 → ✅)
+### Sequential Implementation (Recommended)
+1. **Start with S0**: Read `docs/specs/S0_foundations.md` and implement runtime helpers
+2. **Progress through S1-S9**: Each spec is self-contained with Critical Invariants repeated at top
+3. **Mark complete**: Check off "Done Criteria" before moving to next spec
+4. **No need to read other specs**: Each milestone stands alone
+
+### Parallel Implementation (Advanced)
+1. **Check dependency graph**: See `docs/specs/INDEX.md` for which specs can run in parallel
+2. **Example parallel tracks**:
+   - Track 1: S0 → S1 → S2 → S7 → S8
+   - Track 2: S0 → S1 → S3 → S4 → S5 → S6
+3. **Coordinate on boundaries**: S3 outputs must match S4 inputs, etc.
+
+### For AI Assistants
+1. **Before implementing any feature**: Read the spec's Critical Invariants block (8 bullets, repeated in every spec)
+2. **During implementation**: Follow the spec's detailed requirements section
+3. **For transformation details**: Consult `plan.md` mapping tables
+4. **For error handling**: Use error codes defined in the spec
+5. **Testing**: Run acceptance tests defined in the spec
 
 ---
 
-**Remember**: This is a technology demo prioritizing correctness over performance. When in doubt, consult IMPLEMENTATION.md for the authoritative detailed plan.
+**Remember**: This is a technology demo prioritizing correctness over performance. When in doubt, consult the relevant spec in `docs/specs/` for detailed implementation guidance.
