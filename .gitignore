@@ -1,0 +1,27 @@
+# Build outputs
+dist/
+*.js.map
+*.d.ts.map
+
+# Dependencies
+node_modules/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Test outputs
+coverage/
+.nyc_output/
