@@ -18,7 +18,7 @@ ES5-to-Python transpiler: Converts a defined subset of ES5 JavaScript into execu
 
 **Three-stage pipeline:**
 1. **Parse**: Use `acorn` parser (ES5 mode) to generate ESTree-compatible AST
-2. **Transform**: Convert JavaScript AST to Python AST using `@kriss-u/py-ast` node builders
+2. **Transform**: Convert JavaScript AST to Python AST using `py-ast` node builders
 3. **Generate**: Unparse Python AST to source code
 
 **Runtime library** (`js_compat.py`): Bridges semantic gaps between JavaScript and Python (truthiness, equality, typeof, delete, for-in, Date, regex).

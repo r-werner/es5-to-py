@@ -1,0 +1,36 @@
+{
+  "name": "es5-to-py",
+  "version": "0.1.0",
+  "description": "ES5-to-Python transpiler: Converts a defined subset of ES5 JavaScript into executable Python code",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "es5-to-py": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "keywords": [
+    "transpiler",
+    "javascript",
+    "python",
+    "es5"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "acorn": "8.14.0",
+    "py-ast": "1.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.10",
+    "typescript": "5.7.3",
+    "vitest": "1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

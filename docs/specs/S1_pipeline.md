@@ -1,8 +1,9 @@
 # S1: Pipeline Skeleton
 
-**Status**: ❌ Not Started
+**Status**: ✅ Complete (2025-10-05)
 **Dependencies**: S0
 **Estimated Effort**: 2-3 days
+**Actual Effort**: 1 day
 
 ---
 
@@ -537,18 +538,18 @@ describe('Pipeline Skeleton', () => {
 
 ## Done Criteria
 
-- [ ] TypeScript configuration (`tsconfig.json`) with strict mode
-- [ ] Vitest configuration (`vitest.config.ts`)
-- [ ] `src/parser.ts` implemented with correct Acorn configuration
-- [ ] `src/errors.ts` with UnsupportedNodeError and UnsupportedFeatureError
-- [ ] `src/identifier-sanitizer.ts` with sanitization and scope-aware mapping
-- [ ] `src/transformer.ts` scaffold with visitor pattern
-- [ ] `src/generator.ts` using `@kriss-u/py-ast` unparser
-- [ ] `src/import-manager.ts` with aliased stdlib imports
-- [ ] `src/cli.ts` minimal CLI
-- [ ] Walrus operator support verified in `@kriss-u/py-ast`
-- [ ] All acceptance tests pass (run with `vitest`)
-- [ ] End-to-end pipeline test (parse → transform → generate)
+- [x] TypeScript configuration (`tsconfig.json`) with strict mode
+- [x] Vitest configuration (`vitest.config.ts`)
+- [x] `src/parser.ts` implemented with correct Acorn configuration
+- [x] `src/errors.ts` with UnsupportedNodeError and UnsupportedFeatureError
+- [x] `src/identifier-sanitizer.ts` with sanitization and scope-aware mapping
+- [x] `src/transformer.ts` scaffold with visitor pattern
+- [x] `src/generator.ts` using `py-ast` unparser (v1.9.0)
+- [x] `src/import-manager.ts` with aliased stdlib imports
+- [x] `src/cli.ts` minimal CLI
+- [x] Walrus operator support verified in `py-ast`
+- [x] All acceptance tests pass (10/10 tests with `vitest`)
+- [x] End-to-end pipeline test (parse → transform → generate)
 
 ---
 

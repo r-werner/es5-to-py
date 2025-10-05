@@ -38,17 +38,23 @@ S0 (Foundations)
 
 ---
 
-### ❌ S1: Pipeline Skeleton
+### ✅ S1: Pipeline Skeleton
 **File**: `S1_pipeline.md`
 **Dependencies**: S0
+**Status**: Complete (2025-10-05)
 **Deliverables**:
-- Parser wrapper (`src/parser.js`) using `acorn` with ES5 config
-- Transformer scaffold (`src/transformer.js`) with visitor pattern
-- Generator (`src/generator.js`) using `@kriss-u/py-ast`
-- Minimal CLI (`src/cli.js`)
-- End-to-end "no-op" for literals (input: `42` → output: `42`)
+- Parser wrapper (`src/parser.ts`) using `acorn` with ES5 config
+- Transformer scaffold (`src/transformer.ts`) with visitor pattern
+- Generator (`src/generator.ts`) using `py-ast` (v1.9.0)
+- Import manager (`src/import-manager.ts`) with aliased stdlib imports
+- Identifier sanitizer (`src/identifier-sanitizer.ts`) with scope-aware mapping
+- Error infrastructure (`src/errors.ts`)
+- Minimal CLI (`src/cli.ts`)
+- TypeScript configuration and Vitest setup
+- Acceptance tests (10/10 tests passing)
 
 **Estimated effort**: 2-3 days
+**Actual effort**: 1 day
 
 ---
 
@@ -234,7 +240,7 @@ Every spec repeats these 8 critical invariants at the top:
 Update this section as specs are completed:
 
 - [x] S0: Foundations + Runtime Core ✅ (2025-01-05)
-- [ ] S1: Pipeline Skeleton
+- [x] S1: Pipeline Skeleton ✅ (2025-10-05)
 - [ ] S2: Core Expressions I
 - [ ] S3: Assignment + Functions
 - [ ] S4: Control Flow I
@@ -244,6 +250,6 @@ Update this section as specs are completed:
 - [ ] S8: Regex + Type Ops + Loose Eq
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: S0 complete, ready for S1
-**Last Updated**: 2025-01-05
-**Progress**: 1/9 specs complete (11%)
+**Current Status**: S0 and S1 complete, ready for S2
+**Last Updated**: 2025-10-05
+**Progress**: 2/9 specs complete (22%)

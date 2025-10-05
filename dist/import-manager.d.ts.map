@@ -1,0 +1,1 @@
+{"version":3,"file":"import-manager.d.ts","sourceRoot":"","sources":["../src/import-manager.ts"],"names":[],"mappings":"AAAA,KAAK,UAAU,GAAG,MAAM,GAAG,QAAQ,GAAG,IAAI,GAAG,MAAM,CAAC;AAEpD,qBAAa,aAAa;IACxB,OAAO,CAAC,aAAa,CAAyB;IAC9C,OAAO,CAAC,cAAc,CAAqB;IAE3C,SAAS,CAAC,IAAI,EAAE,UAAU,GAAG,IAAI;IAIjC,UAAU,CAAC,IAAI,EAAE,MAAM,GAAG,IAAI;IAK9B,eAAe,IAAI,MAAM,EAAE;CAuB5B"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"identifier-sanitizer.d.ts","sourceRoot":"","sources":["../src/identifier-sanitizer.ts"],"names":[],"mappings":"AASA,wBAAgB,kBAAkB,CAAC,IAAI,EAAE,MAAM,GAAG,MAAM,CAKvD;AAED,qBAAa,gBAAgB;IAC3B,OAAO,CAAC,MAAM,CAAsC;IAEpD,UAAU,IAAI,IAAI;IAIlB,SAAS,IAAI,IAAI;IAOjB,OAAO,CAAC,YAAY,EAAE,MAAM,GAAG,MAAM;IAOrC,MAAM,CAAC,YAAY,EAAE,MAAM,GAAG,MAAM;CASrC"}
