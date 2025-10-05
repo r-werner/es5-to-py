@@ -15,7 +15,7 @@ These invariants apply to **all** specs. Every feature must respect these rules:
 3. **null vs undefined**: `None` is `null`; `JSUndefined` (singleton) is `undefined`; uninitialized vars → `JSUndefined`
 4. **Member access**: Always via subscript (`obj['prop']`); exception: `.length` reads → `len()`
 5. **Identifier sanitization**: `_js` suffix for reserved words; scope-aware remapping; property keys not sanitized
-6. **Aliased stdlib imports**: `import math as _js_math`, `import random as _js_random`, `import re as _js_re` only
+6. **Aliased stdlib imports**: `import math as _js_math`, `import random as _js_random`, `import re as _js_re`, `import time as _js_time` only
 7. **Return semantics**: Bare `return` → `return JSUndefined` (NOT Python's implicit `None`)
 8. **Temp naming**: `__js_tmp<n>` for temps, `__js_switch_disc_<id>` for switch discriminants
 
@@ -68,12 +68,23 @@ This spec establishes the transpiler pipeline infrastructure: parser, transforme
 
 ### 1. Project Setup (Phase 1.1)
 
+**Technology Stack**:
+- **Language**: TypeScript (strict mode recommended)
+- **Test Framework**: Vitest
+- **Parser**: acorn (ES5 mode)
+- **Python AST Builder**: @kriss-u/py-ast
+
 **Dependencies**:
 ```json
 {
   "dependencies": {
     "acorn": "^8.x.x",
     "@kriss-u/py-ast": "^x.x.x"
+  },
+  "devDependencies": {
+    "typescript": "^5.x.x",
+    "vitest": "^1.x.x",
+    "@types/node": "^20.x.x"
   }
 }
 ```
@@ -81,21 +92,62 @@ This spec establishes the transpiler pipeline infrastructure: parser, transforme
 **Actions**:
 - [ ] Create project structure: `src/`, `tests/`, `runtime/`
 - [ ] Initialize `package.json` with pinned versions
-- [ ] Document Node.js version (e.g., Node 18 LTS)
+- [ ] Configure TypeScript with `tsconfig.json` (strict mode, ESNext target)
+- [ ] Configure Vitest with `vitest.config.ts`
+- [ ] Document Node.js version requirement (≥ 18 LTS)
 - [ ] Document Python version requirement (≥ 3.8)
-- [ ] Configure JavaScript/TypeScript environment
-- [ ] Set up test framework (Jest or similar)
 - [ ] Verify walrus operator support in `@kriss-u/py-ast`
+
+**TypeScript Configuration** (`tsconfig.json`):
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020"],
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests"]
+}
+```
+
+**Vitest Configuration** (`vitest.config.ts`):
+```typescript
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      exclude: ['**/*.test.ts', '**/dist/**']
+    }
+  }
+});
+```
 
 ---
 
-### 2. Parser Wrapper (`src/parser.js`)
+### 2. Parser Wrapper (`src/parser.ts`)
 
 **Implementation**:
-```javascript
-const acorn = require('acorn');
+```typescript
+import * as acorn from 'acorn';
+import type { Node } from 'acorn';
 
-function parseJS(source) {
+export function parseJS(source: string): Node {
   return acorn.parse(source, {
     ecmaVersion: 5,           // ES5 syntax only
     sourceType: 'script',     // NOT 'module'
@@ -105,8 +157,6 @@ function parseJS(source) {
     allowReserved: true       // ES5 allows reserved words in some contexts
   });
 }
-
-module.exports = { parseJS };
 ```
 
 **Acorn Node Structure Verification**:
@@ -116,22 +166,30 @@ module.exports = { parseJS };
 
 ---
 
-### 3. Error Infrastructure (`src/errors.js`)
+### 3. Error Infrastructure (`src/errors.ts`)
 
 **Implementation**:
-```javascript
-class UnsupportedNodeError extends Error {
-  constructor(node, message) {
+```typescript
+import type { Node } from 'acorn';
+
+export class UnsupportedNodeError extends Error {
+  public readonly node: Node;
+  public readonly code = 'E_UNSUPPORTED_NODE';
+
+  constructor(node: Node, message: string) {
     const loc = node.loc ? ` at ${node.loc.start.line}:${node.loc.start.column}` : '';
     super(`${message}${loc}`);
     this.name = 'UnsupportedNodeError';
     this.node = node;
-    this.code = 'E_UNSUPPORTED_NODE';
   }
 }
 
-class UnsupportedFeatureError extends Error {
-  constructor(feature, node, message, code) {
+export class UnsupportedFeatureError extends Error {
+  public readonly feature: string;
+  public readonly node?: Node;
+  public readonly code: string;
+
+  constructor(feature: string, node: Node | undefined, message: string, code: string) {
     const loc = node?.loc ? ` at ${node.loc.start.line}:${node.loc.start.column}` : '';
     super(`${message}${loc}`);
     this.name = 'UnsupportedFeatureError';
@@ -140,8 +198,6 @@ class UnsupportedFeatureError extends Error {
     this.code = code || 'E_UNSUPPORTED_FEATURE';
   }
 }
-
-module.exports = { UnsupportedNodeError, UnsupportedFeatureError };
 ```
 
 **Error Message Requirements**:
@@ -152,12 +208,12 @@ module.exports = { UnsupportedNodeError, UnsupportedFeatureError };
 
 ---
 
-### 4. Identifier Sanitizer (`src/identifier-sanitizer.js`)
+### 4. Identifier Sanitizer (`src/identifier-sanitizer.ts`)
 
 **Purpose**: Prevent collisions with Python reserved words
 
 **Implementation**:
-```javascript
+```typescript
 const PYTHON_KEYWORDS = new Set([
   'class', 'from', 'import', 'def', 'return', 'if', 'else', 'elif',
   'while', 'for', 'in', 'is', 'not', 'and', 'or', 'async', 'await',
@@ -167,45 +223,41 @@ const PYTHON_KEYWORDS = new Set([
 
 const PYTHON_LITERALS = new Set(['None', 'True', 'False']);
 
-function sanitizeIdentifier(name) {
+export function sanitizeIdentifier(name: string): string {
   if (PYTHON_KEYWORDS.has(name) || PYTHON_LITERALS.has(name)) {
     return `${name}_js`;
   }
   return name;
 }
 
-class IdentifierMapper {
-  constructor() {
-    this.scopes = [new Map()]; // Stack of scope maps
-  }
+export class IdentifierMapper {
+  private scopes: Map<string, string>[] = [new Map()];
 
-  enterScope() {
+  enterScope(): void {
     this.scopes.push(new Map());
   }
 
-  exitScope() {
+  exitScope(): void {
     this.scopes.pop();
   }
 
-  declare(originalName) {
+  declare(originalName: string): string {
     const sanitized = sanitizeIdentifier(originalName);
     const currentScope = this.scopes[this.scopes.length - 1];
     currentScope.set(originalName, sanitized);
     return sanitized;
   }
 
-  lookup(originalName) {
+  lookup(originalName: string): string {
     // Search from innermost to outermost scope
     for (let i = this.scopes.length - 1; i >= 0; i--) {
       if (this.scopes[i].has(originalName)) {
-        return this.scopes[i].get(originalName);
+        return this.scopes[i].get(originalName)!;
       }
     }
     return sanitizeIdentifier(originalName); // Fallback
   }
 }
-
-module.exports = { sanitizeIdentifier, IdentifierMapper };
 ```
 
 **Scope-Aware Remapping**:
@@ -216,51 +268,48 @@ module.exports = { sanitizeIdentifier, IdentifierMapper };
 
 ---
 
-### 5. Transformer Scaffold (`src/transformer.js`)
+### 5. Transformer Scaffold (`src/transformer.ts`)
 
 **Implementation**:
-```javascript
-const { IdentifierMapper } = require('./identifier-sanitizer');
-const { UnsupportedNodeError } = require('./errors');
+```typescript
+import type { Node } from 'acorn';
+import { IdentifierMapper } from './identifier-sanitizer';
+import { UnsupportedNodeError } from './errors';
 
-class Transformer {
-  constructor() {
-    this.identifierMapper = new IdentifierMapper();
-    this.tempCounter = 0;
-  }
+export class Transformer {
+  private identifierMapper = new IdentifierMapper();
+  private tempCounter = 0;
 
-  allocateTemp() {
+  allocateTemp(): string {
     return `__js_tmp${++this.tempCounter}`;
   }
 
-  transform(jsAst) {
+  transform(jsAst: Node): any {
     // Entry point for transformation
     return this.visitNode(jsAst);
   }
 
-  visitNode(node) {
-    const method = `visit${node.type}`;
-    if (this[method]) {
-      return this[method](node);
+  visitNode(node: Node): any {
+    const method = `visit${node.type}` as keyof this;
+    if (this[method] && typeof this[method] === 'function') {
+      return (this[method] as any)(node);
     }
     throw new UnsupportedNodeError(node, `Unsupported node type: ${node.type}`);
   }
 
   // Visitor methods added by other specs
-  visitProgram(node) {
+  visitProgram(node: Node): any {
     // Implemented in S3
     throw new UnsupportedNodeError(node, 'Program transformation not yet implemented');
   }
 
-  visitLiteral(node) {
+  visitLiteral(node: Node): any {
     // Implemented in S2
     throw new UnsupportedNodeError(node, 'Literal transformation not yet implemented');
   }
 
   // ... other visitors added in later specs
 }
-
-module.exports = { Transformer };
 ```
 
 **Visitor Pattern**:
@@ -271,18 +320,16 @@ module.exports = { Transformer };
 
 ---
 
-### 6. Generator (`src/generator.js`)
+### 6. Generator (`src/generator.ts`)
 
 **Implementation**:
-```javascript
-const pyAst = require('@kriss-u/py-ast');
+```typescript
+import * as pyAst from '@kriss-u/py-ast';
 
-function generatePython(pythonAst) {
+export function generatePython(pythonAst: any): string {
   // Use @kriss-u/py-ast to unparse Python AST to source code
   return pyAst.unparse(pythonAst);
 }
-
-module.exports = { generatePython };
 ```
 
 **Requirements**:
@@ -292,31 +339,30 @@ module.exports = { generatePython };
 
 ---
 
-### 7. Import Manager (`src/import-manager.js`)
+### 7. Import Manager (`src/import-manager.ts`)
 
 **Implementation**:
-```javascript
-class ImportManager {
-  constructor() {
-    this.stdlibImports = new Set(); // 'math', 'random', 're', 'time'
-    this.runtimeImports = new Set(); // 'JSUndefined', 'js_truthy', etc.
-  }
+```typescript
+type StdlibName = 'math' | 'random' | 're' | 'time';
 
-  addStdlib(name) {
-    // name: 'math', 'random', 're', 'time'
+export class ImportManager {
+  private stdlibImports = new Set<StdlibName>();
+  private runtimeImports = new Set<string>();
+
+  addStdlib(name: StdlibName): void {
     this.stdlibImports.add(name);
   }
 
-  addRuntime(name) {
+  addRuntime(name: string): void {
     // name: 'JSUndefined', 'js_truthy', 'console_log', etc.
     this.runtimeImports.add(name);
   }
 
-  generateImports() {
-    const imports = [];
+  generateImports(): string[] {
+    const imports: string[] = [];
 
     // Stdlib imports with aliases (sorted for determinism)
-    const stdlibAliases = {
+    const stdlibAliases: Record<StdlibName, string> = {
       math: '_js_math',
       random: '_js_random',
       re: '_js_re',
@@ -336,8 +382,6 @@ class ImportManager {
     return imports.join('\n');
   }
 }
-
-module.exports = { ImportManager };
 ```
 
 **Aliased Stdlib Imports**:
@@ -356,18 +400,18 @@ module.exports = { ImportManager };
 
 ---
 
-### 8. Minimal CLI (`src/cli.js`)
+### 8. Minimal CLI (`src/cli.ts`)
 
 **Implementation**:
-```javascript
+```typescript
 #!/usr/bin/env node
 
-const fs = require('fs');
-const { parseJS } = require('./parser');
-const { Transformer } = require('./transformer');
-const { generatePython } = require('./generator');
+import * as fs from 'fs';
+import { parseJS } from './parser';
+import { Transformer } from './transformer';
+import { generatePython } from './generator';
 
-function main() {
+function main(): void {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
@@ -385,7 +429,7 @@ function main() {
     const pythonCode = generatePython(pythonAst);
 
     console.log(pythonCode);
-  } catch (error) {
+  } catch (error: any) {
     console.error(`Error: ${error.message}`);
     if (error.code) {
       console.error(`Code: ${error.code}`);
@@ -416,12 +460,13 @@ This spec introduces these error codes:
 
 ## Acceptance Tests
 
-### Test File: `tests/pipeline/test_skeleton.js`
+### Test File: `tests/pipeline/test_skeleton.test.ts`
 
-```javascript
-const { parseJS } = require('../src/parser');
-const { Transformer } = require('../src/transformer');
-const { generatePython } = require('../src/generator');
+```typescript
+import { describe, test, expect } from 'vitest';
+import { parseJS } from '../../src/parser';
+import { Transformer } from '../../src/transformer';
+import { generatePython } from '../../src/generator';
 
 describe('Pipeline Skeleton', () => {
   test('Parser produces ESTree AST', () => {
@@ -438,15 +483,15 @@ describe('Pipeline Skeleton', () => {
   });
 
   test('Error infrastructure works', () => {
-    const { UnsupportedNodeError } = require('../src/errors');
-    const node = { type: 'Unknown', loc: { start: { line: 1, column: 0 } } };
+    const { UnsupportedNodeError } = await import('../../src/errors');
+    const node = { type: 'Unknown', loc: { start: { line: 1, column: 0 } } } as any;
     const error = new UnsupportedNodeError(node, 'Test error');
     expect(error.message).toContain('Test error');
     expect(error.message).toContain('1:0');
   });
 
   test('Identifier sanitization works', () => {
-    const { sanitizeIdentifier } = require('../src/identifier-sanitizer');
+    const { sanitizeIdentifier } = await import('../../src/identifier-sanitizer');
     expect(sanitizeIdentifier('class')).toBe('class_js');
     expect(sanitizeIdentifier('from')).toBe('from_js');
     expect(sanitizeIdentifier('None')).toBe('None_js');
@@ -454,7 +499,7 @@ describe('Pipeline Skeleton', () => {
   });
 
   test('Import manager generates correct imports', () => {
-    const { ImportManager } = require('../src/import-manager');
+    const { ImportManager } = await import('../../src/import-manager');
     const mgr = new ImportManager();
     mgr.addStdlib('math');
     mgr.addRuntime('JSUndefined');
@@ -492,15 +537,17 @@ describe('Pipeline Skeleton', () => {
 
 ## Done Criteria
 
-- [ ] `src/parser.js` implemented with correct Acorn configuration
-- [ ] `src/errors.js` with UnsupportedNodeError and UnsupportedFeatureError
-- [ ] `src/identifier-sanitizer.js` with sanitization and scope-aware mapping
-- [ ] `src/transformer.js` scaffold with visitor pattern
-- [ ] `src/generator.js` using `@kriss-u/py-ast` unparser
-- [ ] `src/import-manager.js` with aliased stdlib imports
-- [ ] `src/cli.js` minimal CLI
+- [ ] TypeScript configuration (`tsconfig.json`) with strict mode
+- [ ] Vitest configuration (`vitest.config.ts`)
+- [ ] `src/parser.ts` implemented with correct Acorn configuration
+- [ ] `src/errors.ts` with UnsupportedNodeError and UnsupportedFeatureError
+- [ ] `src/identifier-sanitizer.ts` with sanitization and scope-aware mapping
+- [ ] `src/transformer.ts` scaffold with visitor pattern
+- [ ] `src/generator.ts` using `@kriss-u/py-ast` unparser
+- [ ] `src/import-manager.ts` with aliased stdlib imports
+- [ ] `src/cli.ts` minimal CLI
 - [ ] Walrus operator support verified in `@kriss-u/py-ast`
-- [ ] All acceptance tests pass
+- [ ] All acceptance tests pass (run with `vitest`)
 - [ ] End-to-end pipeline test (parse → transform → generate)
 
 ---
