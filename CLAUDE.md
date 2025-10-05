@@ -130,42 +130,22 @@ arr[1] = JSUndefined
 - Constructor: `new Date()` only
 
 **Out of scope (fail fast with error codes):**
-- `this`, prototypes, classes, `let`/`const`, closures beyond lexical nesting
-- `try`/`catch`/`finally`, `with`, `for..of`, dynamic object keys
-- Function declarations inside blocks (Annex B behavior)
-- Bitwise operators
-- Array methods: `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc. (only `push` single-arg and `pop` supported)
-- Object methods: `Object.keys`, `Object.values`, `Object.assign`, etc.
-- Regex methods `match`/`exec` (only `.test()` and `.replace()` supported)
-- Regex `g` flag (allowed ONLY in `String.prototype.replace` context)
+- `this`, prototypes, classes, `let`/`const`, closures, `try`/`catch`, `with`, `for..of`
+- Bitwise operators, most array/object methods (only `push` single-arg and `pop` supported)
 - `in` operator, `instanceof` operator
-- See IMPLEMENTATION.md for complete list with error codes
+- See IMPLEMENTATION.md Section 1 (lines 35-190) for complete list with error codes
 
-## Key Transformation Rules
+## Quick Transformation Reference
 
-### Variable Hoisting
-- Two-pass per function: collect all `var` names (including nested blocks)
-- Emit `name = JSUndefined` initializers at function top
+**See IMPLEMENTATION.md Phases 1-4 for complete transformation rules. Key highlights:**
 
-### Control Flow
-- **For-loops**: Desugar to `while` with continue rewriting
-- **For-in**: Use `js_for_in_keys()` helper (yields strings, skips holes)
-- **Switch**: Transform to `while True` block; static validation detects fall-through
-
-### Built-in Mappings
-- **Math**: Map to aliased Python `math` module (`Math.sqrt(x)` → `_js_math.sqrt(x)`, `Infinity` → `_js_math.inf`)
-- **String**: Map methods with edge cases (`charAt(i)` → `str[i:i+1]`)
-- **Date**: `new Date()` → `JSDate()`, `Date.now()` → `js_date_now()` (milliseconds since epoch)
-- **Array**: `push(x)` → `append(x)` (single arg only), `pop()` → `js_array_pop()` (wrapper returns `JSUndefined` for empty arrays)
-  - **Detection policy**: Only rewrite when receiver is provably an array (array literal or tracked variable)
-  - Ambiguous receivers error with `E_ARRAY_METHOD_AMBIGUOUS`
-- **Operators**: `+` → `js_add()`, `%` → `js_mod()`, `===` → `js_strict_eq()`, `==` → `js_loose_eq()`
-- **Special**: `void expr` → evaluate expr, return `JSUndefined`; `typeof undeclaredVar` → `'undefined'` (no error)
-
-### Import Management
-- **Aliased imports** to avoid collisions: `import math as _js_math`, `import random as _js_random`, `import re as _js_re`, `import time as _js_time`
-- Deterministic order: stdlib first (aliased), then runtime imports
-- No unused imports
+- **Hoisting**: Two-pass per function, emit `name = JSUndefined` at function top
+- **For-loops**: Desugar to `while`; continue must execute update first
+- **Switch**: Transform to `while True` block with strict equality matching
+- **Member access**: Always use subscript `obj['prop']` (not attribute access)
+- **Operators**: `+` → `js_add()`, `%` → `js_mod()`, `===` → `js_strict_eq()`
+- **Arrays**: `push(x)` → `append(x)`, `pop()` → `js_array_pop()` (with array type detection)
+- **Imports**: Aliased stdlib (`import math as _js_math`), then runtime imports, deterministic order
 
 ## Where to Find What
 
@@ -180,30 +160,12 @@ arr[1] = JSUndefined
 | Known limitations | `IMPLEMENTATION.md` Phase 5.7 |
 | Math/String mapping tables | `plan.md` Section 5 |
 
-## Development Workflow
+## Implementation Workflow
 
-1. **Before implementing any feature**: Check IMPLEMENTATION.md Critical Correctness Requirements
-2. **During implementation**: Follow phase-by-phase tasks in IMPLEMENTATION.md
-3. **For transformation details**: Consult plan.md mapping tables
-4. **For error handling**: Use error codes from IMPLEMENTATION.md
-5. **Testing**: Follow test matrix in IMPLEMENTATION.md Phase 5
-
-## Quick Commands
-
-```bash
-# Parse JavaScript (use acorn with ES5 config)
-acorn.parse(code, { ecmaVersion: 5, sourceType: 'script', locations: true, ranges: true })
-
-# Build Python AST (use @kriss-u/py-ast)
-# Unparse to Python source
-```
-
-## Implementation Status
-
-See `IMPLEMENTATION.md` for task checkboxes and progress tracking:
-- ❌ Not Started
-- 🔄 In Progress
-- ✅ Complete
+1. **Start here**: Read Critical Correctness Requirements in IMPLEMENTATION.md (lines 7-190)
+2. **Follow phases**: IMPLEMENTATION.md Phases 1-5 for step-by-step tasks
+3. **Check mappings**: plan.md for complete transformation tables
+4. **Track progress**: Update checkboxes in IMPLEMENTATION.md (❌ → 🔄 → ✅)
 
 ---
 
