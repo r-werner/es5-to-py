@@ -13,10 +13,12 @@ import math as _js_math
 
 class _JSUndefined:
     """Sentinel for JavaScript undefined (distinct from None/null)."""
-    def __repr__(self):
+    __slots__ = ()
+
+    def __repr__(self) -> str:
         return 'undefined'
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return False
 
 # Singleton instance (NEVER create another instance)
@@ -27,7 +29,7 @@ JSUndefined = _JSUndefined()
 # Truthiness
 # ============================================================================
 
-def js_truthy(x):
+def js_truthy(x: object) -> bool:
     """
     JavaScript truthiness semantics.
 
@@ -85,11 +87,11 @@ class JSException(Exception):
     Attributes:
         value: The thrown JavaScript value (can be any type)
     """
-    def __init__(self, value):
+    def __init__(self, value: object) -> None:
         self.value = value
         super().__init__(repr(value))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'JSException({self.value!r})'
 
 

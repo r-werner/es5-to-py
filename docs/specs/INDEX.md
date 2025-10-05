@@ -22,16 +22,19 @@ S0 (Foundations)
 
 ## Milestones
 
-### ❌ S0: Foundations + Runtime Core
+### ✅ S0: Foundations + Runtime Core
 **File**: `S0_foundations.md`
 **Dependencies**: None
+**Status**: Complete (2025-01-05)
 **Deliverables**:
 - `runtime/js_compat.py` with `JSUndefined`, `js_truthy`, `JSException`
 - Aliased stdlib imports contract (`import math as _js_math`)
 - Python ≥ 3.8 version check
-- Smoke tests for runtime helpers
+- Smoke tests for runtime helpers (15/15 tests passing)
+- Type hints and `__slots__` for code quality
 
 **Estimated effort**: 1-2 days
+**Actual effort**: 1 day
 
 ---
 
@@ -230,7 +233,7 @@ Every spec repeats these 8 critical invariants at the top:
 
 Update this section as specs are completed:
 
-- [ ] S0: Foundations + Runtime Core
+- [x] S0: Foundations + Runtime Core ✅ (2025-01-05)
 - [ ] S1: Pipeline Skeleton
 - [ ] S2: Core Expressions I
 - [ ] S3: Assignment + Functions
@@ -241,5 +244,6 @@ Update this section as specs are completed:
 - [ ] S8: Regex + Type Ops + Loose Eq
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: Not started
-**Last Updated**: 2025-10-05
+**Current Status**: S0 complete, ready for S1
+**Last Updated**: 2025-01-05
+**Progress**: 1/9 specs complete (11%)

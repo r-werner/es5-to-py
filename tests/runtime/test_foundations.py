@@ -1,5 +1,4 @@
 import pytest
-import math
 from runtime.js_compat import JSUndefined, js_truthy, JSException
 
 
