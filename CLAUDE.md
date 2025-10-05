@@ -58,12 +58,22 @@ These are the most critical correctness requirements that are easy to violate. *
 - Avoids attribute shadowing; consistent for dicts
 - Exception: `.length` property detection → `len()`
 
-### 6. **Switch Discriminant Must Be Cached**
+### 6. **Identifier Sanitization with Consistent Remapping**
+- Python keywords/literals collide with JS identifiers: `class`, `from`, `None`, `True`, `False`, etc.
+- **Policy**: Append `_js` suffix if collision (e.g., `class` → `class_js`)
+- **Apply to**: Variable names, function names, parameters
+- **Do NOT apply to**: Object property keys (use subscript: `obj['class']`)
+- **CRITICAL - Reference consistency**: Build scope-aware symbol table
+  - `var class = 5; return class;` → `class_js = 5; return class_js;` (ALL references remapped)
+  - `function from() {} from();` → `def from_js(): ... from_js();` (declaration + call sites)
+  - Use two-pass: collect declarations → build mapping → remap all references
+
+### 7. **Switch Discriminant Must Be Cached**
 - Evaluate discriminant once and store in temp variable
 - Prevents re-evaluation if discriminant has side effects
 - Use strict equality (`js_strict_eq`) for ALL case matching
 
-### 7. **Continue in For-Loops Must Execute Update**
+### 8. **Continue in For-Loops Must Execute Update**
 - C-style `for(init; test; update)` desugars to `while` loop
 - **CRITICAL**: Rewrite `continue` to execute update before jumping to test
 - Use loop ID tagging to prevent incorrect update injection in nested loops
@@ -120,6 +130,18 @@ del arr[1]
 arr[1] = JSUndefined
 ```
 
+❌ **DON'T** forget to remap ALL identifier references
+```python
+# WRONG: Only declaration sanitized, reference missed
+# Input: var class = 5; return class;
+class_js = 5
+return class  # WRONG: Should be class_js
+
+# RIGHT: ALL references remapped consistently
+class_js = 5
+return class_js
+```
+
 ## Supported ES5 Subset
 
 **In scope:**
@@ -133,6 +155,7 @@ arr[1] = JSUndefined
 - `this`, prototypes, classes, `let`/`const`, closures, `try`/`catch`, `with`, `for..of`
 - Bitwise operators, most array/object methods (only `push` single-arg and `pop` supported)
 - `in` operator, `instanceof` operator
+- Array `.length` assignment (exception: `arr.length = 0` → `arr.clear()` supported as common clear pattern)
 - See IMPLEMENTATION.md Section 1 (lines 35-190) for complete list with error codes
 
 ## Quick Transformation Reference
@@ -143,7 +166,7 @@ arr[1] = JSUndefined
 - **For-loops**: Desugar to `while`; continue must execute update first
 - **Switch**: Transform to `while True` block with strict equality matching
 - **Member access**: Always use subscript `obj['prop']` (not attribute access)
-- **Operators**: `+` → `js_add()`, `%` → `js_mod()`, `===` → `js_strict_eq()`
+- **Operators**: All binary arithmetic use runtime helpers with ToNumber coercion: `+` → `js_add()`, `-` → `js_sub()`, `*` → `js_mul()`, `/` → `js_div()`, `%` → `js_mod()`, `===` → `js_strict_eq()`
 - **Arrays**: `push(x)` → `append(x)`, `pop()` → `js_array_pop()` (with array type detection)
 - **Imports**: Aliased stdlib (`import math as _js_math`), then runtime imports, deterministic order
 

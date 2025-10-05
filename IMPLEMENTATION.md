@@ -89,11 +89,7 @@ Before implementing, ensure these key semantic issues are addressed:
    - Message: "SequenceExpression (comma operator) is only supported in for-loop init/update clauses. Refactor to separate statements."
    - Rationale: Simplifies implementation; covers 99% of real ES5 code; clear scope boundaries for demo
 
-23. **Augmented assignment policy**: **DECISION FOR DEMO**: Numeric-only. Error on type mismatches.
-   - `+=` uses `js_add` (handles string concat + numeric addition)
-   - `-=`, `*=`, `/=`, `%=` are numeric-only; error with code `E_NUM_AUGMENT_COERCION` on type mismatch
-   - Document full coercion as future enhancement
-   - Simplifies runtime and reduces edge-case bugs
+23. **Augmented assignment policy**: See Critical Correctness #8 above for the canonical policy statement. Summary: `+=` uses `js_add`; numeric-only ops (`-=`, `*=`, `/=`, `%=`) error on type mismatches.
 
 24. **Augmented assignment single-evaluation**: For `obj[key] += val`, temp base/key once:
    - Capture `_base := obj`, `_key := key`, `_val := val`
@@ -131,19 +127,24 @@ Before implementing, ensure these key semantic issues are addressed:
    - Message: "Array/Object method 'X' is not supported. Use explicit loops or supported alternatives."
    - Document in "Known Limitations" section
 
-28. **Regex usage beyond literals**: Map common regex usage patterns.
-   - Map `regex.test(str)` → `bool(regex.search(str))` or `js_regex_test(regex, str)` helper
-   - Map `str.replace(regex, repl)`:
-     - **Without 'g' flag**: `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
-     - **With 'g' flag**: `regex.sub(repl, str, count=0)` (unlimited replacements, global)
-       - **CRITICAL**: `count=0` means "unlimited replacements" in Python (NOT "zero replacements")
-       - **CRITICAL**: The compiled regex does NOT encode 'g'; 'g' only controls the `count` parameter
-       - `compile_js_regex()` strips 'g' before compilation (Python re has no global flag)
-     - **SPECIAL CASE**: Allow 'g' flag ONLY for `String.prototype.replace` (common real-world pattern)
-     - **Context validation**: Only inline regex literals with 'g' allowed; stored variables with 'g' → ERROR
-     - Error on 'g' flag in other contexts (`.test()`, variable storage, etc.)
-   - Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope (or add minimal helpers)
-   - Add explicit tests for `.test()` and `replace()` with regex argument
+28. **Regex 'g' flag policy (uniform and testable)**:
+   - **ALLOWED context (ONLY)**: Inline regex literal in `String.prototype.replace()` call
+     - Example: `'aaa'.replace(/a/g, 'b')` → Compiles regex WITHOUT 'g', uses `count=0` in `.sub()`
+     - Pattern: `_regex = compile_js_regex('a', 'g')` → `compile_js_regex()` strips 'g' before compilation
+     - Then: `_regex.sub('b', 'aaa', count=0)` → `count=0` means "unlimited replacements" in Python
+   - **REJECTED contexts (ERROR with code `E_REGEX_GLOBAL_CONTEXT`)**: ALL other uses of 'g' flag
+     - Stored in variable: `var r = /a/g; 'aaa'.replace(r, 'b')` → ERROR
+     - Used with `.test()`: `/test/g.test('str')` → ERROR
+     - In array literal: `var patterns = [/a/g, /b/];` → ERROR
+     - In object literal: `var obj = {pattern: /a/g};` → ERROR
+     - Passed as function arg: `function f(r) {} f(/a/g);` → ERROR at literal site
+     - Any context other than inline `String.prototype.replace()` → ERROR
+   - **Error message**: "Regex global flag 'g' is only supported in String.prototype.replace with inline literals. Inline the regex in the replace call, or use Python's re.findall()/re.finditer() for global matching."
+   - **Implementation**: Strip 'g' at compile time in `compile_js_regex()`; detect usage context during AST transformation
+   - **Testing**: Explicit tests for allowed context (inline replace) and all rejection contexts listed above
+   - Map `regex.test(str)` → `bool(regex.search(str))` (no 'g' allowed)
+   - Map `str.replace(regex, repl)` without 'g' → `regex.sub(repl, str, count=1)` (single replacement)
+   - Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope
    - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace, count=0)
    - Add test: `var r = /a/g; 'aaa'.replace(r, 'b')` → ERROR (stored variable with 'g' not allowed)
 
@@ -152,10 +153,23 @@ Before implementing, ensure these key semantic issues are addressed:
    - Python keywords: `class`, `from`, `import`, `def`, `return`, `if`, `else`, `elif`, `while`, `for`, `in`, `is`, `not`, `and`, `or`, `async`, `await`, `with`, `try`, `except`, `finally`, `raise`, `assert`, `lambda`, `yield`, `global`, `nonlocal`, `del`, `pass`, `break`, `continue`, etc.
    - Python literals: `None`, `True`, `False`
    - **Policy**: If identifier collides, append `_js` suffix (e.g., `class` → `class_js`, `from` → `from_js`)
-   - **Apply to**: Variables, function names, parameters
+   - **Apply to**: Variable declarations, function names, parameters
    - **Do NOT apply to**: Object property keys (since we use subscript access `obj['class']`)
-   - Maintain mapping table in transformer for consistent renaming
-   - Add tests: `var class = 5;`, `function from() {}`, parameter named `None`
+   - **CRITICAL - Reference consistency**: Maintain scope-aware mapping table in transformer
+     - When `var class = 5` is sanitized to `class_js = 5`, ALL references to `class` in that scope become `class_js`
+     - When `function from() {}` becomes `def from_js():`, ALL call sites `from()` become `from_js()`
+     - When parameter `None` becomes `None_js`, ALL references in function body remap to `None_js`
+     - Use symbol table to track sanitized names per scope (function/block)
+     - References (`Identifier` in expression position) look up sanitized name from symbol table
+   - **Implementation**: Two-pass per scope:
+     1. First pass: Collect all declarations and build sanitized name mapping
+     2. Second pass: Transform AST, remapping all identifier references using the mapping
+   - Add tests:
+     - Declaration + reference: `var class = 5; return class;` → `class_js = 5; return class_js;`
+     - Function + call: `function from() { return 1; } from();` → `def from_js(): return 1; from_js();`
+     - Parameter: `function f(None) { return None; }` → `def f(None_js): return None_js;`
+     - Nested scopes: `function from() { var from = 1; return from; }` → inner `from` shadowing
+     - Property access (NOT sanitized): `obj.class` → `obj['class']` (property key unchanged)
 
 30. **Stdlib import aliasing to avoid name collisions**: Users may define variables named `math`, `random`, `re`, `time`.
    - **CRITICAL**: Import stdlib with stable aliases to avoid collisions with user code
@@ -206,6 +220,10 @@ Before implementing, ensure these key semantic issues are addressed:
 
 ---
 
+**NOTE**: All Critical Correctness Requirements have matching actionable tasks in the Phase sections. See cross-reference analysis in `/CRITICAL_REQUIREMENTS_ANALYSIS.md` for complete mapping.
+
+---
+
 ## Phase 1: Skeleton + Core Expressions/Statements
 
 ### 1.1 Project Setup
@@ -243,9 +261,17 @@ Before implementing, ensure these key semantic issues are addressed:
   - Keywords: `class`, `from`, `import`, `def`, `return`, `if`, `else`, `elif`, `while`, `for`, `in`, `is`, `not`, `and`, `or`, `async`, `await`, `with`, `try`, `except`, `finally`, `raise`, `assert`, `lambda`, `yield`, `global`, `nonlocal`, `del`, `pass`, `break`, `continue`
   - Literals: `None`, `True`, `False`
   - Function `sanitizeIdentifier(name: string): string` → append `_js` if collision
-  - Apply to: variable names, function names, parameters
-  - Do NOT apply to: object property keys (subscript access handles this)
-  - Test with: `var class = 5;`, `function from() {}`, `var None = null;`
+  - **Apply to**: Variable declarations, function names, parameters
+  - **Do NOT apply to**: Object property keys (subscript access handles this)
+  - **Scope-aware remapping**: Build symbol table mapping original → sanitized names per scope
+    - Track ALL identifier declarations in scope (vars, function names, params)
+    - When transforming `Identifier` nodes in expression position, look up sanitized name
+    - Ensures ALL references are consistently remapped (not just declarations)
+  - Test with:
+    - `var class = 5; return class;` → both declaration and reference sanitized
+    - `function from() { return 1; } from();` → function name and call site both sanitized
+    - `function f(None) { return None; }` → parameter and reference both sanitized
+    - `obj.class` → property key NOT sanitized (uses subscript `obj['class']`)
 - [ ] ❌ Create `src/transformer.ts`: Base visitor class/framework for traversing ESTree AST
 - [ ] ❌ Create `src/generator.ts`: Python AST unparsing using `@kriss-u/py-ast`
 - [ ] ❌ Create `src/import-manager.ts`: Track required imports with **aliasing**
@@ -290,9 +316,12 @@ Before implementing, ensure these key semantic issues are addressed:
   - Support string-literal keys: `{'a': 1}` → `{'a': 1}`
   - Error on computed keys: `{[expr]: 1}` → unsupported
 - [ ] ❌ Transform arithmetic operators: `+`, `-`, `*`, `/`
-  - For `+`: Use runtime helper `js_add(a, b)` (handles number addition vs string concatenation)
-  - For `-`, `*`, `/`: Use runtime helpers `js_sub()`, `js_mul()`, `js_div()` for ToNumber coercion
-  - OR: Scope to numeric-only operands and error on type mismatches (simpler for demo)
+  - **LOCKED DECISION**: Use runtime helpers with full ToNumber coercion for all binary arithmetic operators
+  - `+`: Use runtime helper `js_add(a, b)` (handles number addition vs string concatenation)
+  - `-`: Use runtime helper `js_sub(a, b)` (ToNumber coercion; e.g., `'5' - 2` → `3`)
+  - `*`: Use runtime helper `js_mul(a, b)` (ToNumber coercion)
+  - `/`: Use runtime helper `js_div(a, b)` (ToNumber coercion; handles infinity for division by zero)
+  - **Rationale**: Common patterns like `'5' - 2` work correctly; matches JS semantics
 - [ ] ❌ Transform `%` operator → `js_mod(a, b)` runtime helper
   - **CRITICAL**: JS remainder keeps dividend sign; Python % differs with negatives
   - `js_mod(-1, 2)` must return `-1` (not `1` as in Python)
@@ -382,10 +411,10 @@ Before implementing, ensure these key semantic issues are addressed:
     - No temporary needed for simple assignment (walrus handles it)
   - **Assignment operators**:
     - `=` → `Assign` (or walrus `NamedExpr` in expression context)
-    - `+=` → **CRITICAL**: Use `js_add(lhs, rhs)` (handles string concat + numeric addition)
-      - Transform to: `lhs = js_add(lhs, rhs)` (not Python AugAssign)
-    - `-=`, `*=`, `/=`, `%=` → **Numeric-only** (demo decision); error on type mismatch with code `E_NUM_AUGMENT_COERCION`
-- [ ] ❌ **Single-evaluation for member targets** (see Critical Correctness #21, #23):
+    - `+=`, `-=`, `*=`, `/=`, `%=` → See Critical Correctness #8 for augmented assignment policy
+      - `+=` uses `js_add(lhs, rhs)`; transform to `lhs = js_add(lhs, rhs)` (not Python AugAssign)
+      - `-=`, `*=`, `/=`, `%=` are numeric-only; error on type mismatch with code `E_NUM_AUGMENT_COERCION`
+- [ ] ❌ **Single-evaluation for member targets** (see Critical Correctness #8, #21, #24):
   - For `MemberExpression` target: Capture base and key in temps before read/compute/write
   - Pattern: `_base := base_expr`, `_key := key_expr`, read `_base[_key]`, compute, write `_base[_key] = result`
   - Ensures `obj().prop += f()` evaluates `obj()` and `f()` exactly once
@@ -458,8 +487,6 @@ Before implementing, ensure these key semantic issues are addressed:
 
 ### 1.7 UpdateExpression Support (++/--)
 - [ ] ❌ Transform `UpdateExpression` for `++` and `--` operators
-  - **CRITICAL**: For non-for contexts, prefer runtime helpers over walrus tuples for readability
-  - For for-update clause: Inline code okay since result value not used
   - Prefix `++x`: Increment then return new value
   - Postfix `x++`: Return old value then increment
   - Prefix `--x`: Similar to `++x`
@@ -468,9 +495,11 @@ Before implementing, ensure these key semantic issues are addressed:
   - **CRITICAL**: Single-evaluation for `MemberExpression` targets (see Critical Correctness #21)
     - `obj[key()]++` must evaluate `obj` and `key()` exactly once
     - Capture base/key in temps, read, compute, write using same temps
-  - Implement runtime helpers `js_pre_inc()`, `js_post_inc()`, `js_pre_dec()`, `js_post_dec()` for correctness
+  - **Implementation strategy**:
+    - For for-update clause: Inline code okay since result value not used (simple increment/decrement)
+    - For expression contexts: Use runtime helpers `js_pre_inc()`, `js_post_inc()`, `js_pre_dec()`, `js_post_dec()` for correctness
   - Minimum viable: Full support in ForStatement update clause (most common use case)
-  - Optional: Support in other contexts (assignments, expressions)
+  - Extended: Support in other contexts (assignments, expressions) via runtime helpers
 
 **Test:** `var i = 0; var x = i++;` → `x = 0`, `i = 1`
 **Test:** `var i = 0; var x = ++i;` → `x = 1`, `i = 1`
@@ -604,7 +633,9 @@ Before implementing, ensure these key semantic issues are addressed:
 
 ### 2.7 For-In Loops
 - [ ] ❌ Add `js_for_in_keys(obj)` to runtime: Return iterator over keys as **strings**
-  - Dict: yield keys as-is (assumed to be strings for this demo)
+  - Dict: yield keys **converted to strings** (use `str(key)` to ensure all keys are strings)
+    - **CRITICAL**: JS always converts property names to strings, even numeric properties
+    - Example: `{1: 'a', 2: 'b'}` → yields `'1'`, `'2'` (strings, not integers)
   - List: yield indices as strings (`'0'`, `'1'`, ...) **but skip holes**
     - **CRITICAL**: Skip indices where value is `JSUndefined` (array holes created by delete)
     - JS for-in skips deleted array elements; our implementation must do the same
@@ -615,7 +646,7 @@ Before implementing, ensure these key semantic issues are addressed:
 - [ ] ❌ Transform `ForInStatement(left, right, body)` → `for key in js_for_in_keys(right): body`
 - [ ] ❌ Handle left side: `var x` or bare identifier
 
-**Test:** `for (var k in {a: 1, b: 2}) { ... }` → iterates over `'a'`, `'b'`
+**Test:** `for (var k in {a: 1, b: 2}) { ... }` → iterates over `'a'`, `'b'` (strings)
 
 **Test:** `for (var i in [10, 20, 30]) { ... }` → iterates over `'0'`, `'1'`, `'2'` (strings, not ints)
 
@@ -623,37 +654,95 @@ Before implementing, ensure these key semantic issues are addressed:
 
 **Test:** `for (var k in {'0': 'a', '1': 'b'}) { ... }` → numeric-like string keys work correctly
 
+**Test (numeric keys):** `for (var k in {1: 'a', 2: 'b'}) { ... }` → iterates over `'1'`, `'2'` (keys converted to strings)
+
+**Test (assert string type):** `for (var k in {a: 1}) { console.log(typeof k); }` → prints `'string'` (verify keys are strings, not other types)
+
 **Test:** Sparse array with multiple holes: `var a = []; a[0] = 1; a[5] = 2; for (var i in a) { ... }` → iterates over `'0'`, `'5'`
 
 ---
 
 ### 2.8 Switch Statements (with Static Validation)
-- [ ] ❌ Add static validator pass to detect fall-through between non-empty cases:
-  - Traverse switch cases
-  - Check if non-empty case (has statements) lacks explicit terminator (break, return, throw)
-  - Error with location: "Fall-through between non-empty cases is unsupported; add explicit break statement"
-  - Allow consecutive empty cases (case aliases)
+
+**Implementation steps (in order):**
+
+#### Step 1: Static Validation Pass (runs before transformation)
+- [ ] ❌ Implement static validator to detect fall-through between non-empty cases:
+  - Traverse switch cases sequentially
+  - For each case with statements (non-empty):
+    - Check if it ends with explicit terminator (`break`, `return`, `throw`)
+    - If not, check if next case is empty (allowed as alias) or non-empty (error)
+  - **Error on**: Non-empty case → non-empty case without terminator
+  - **Allow**: Consecutive empty cases (case aliases: `case 1: case 2: case 3: stmt; break;`)
   - **Detect subtle case**: "non-empty case → empty alias case(s) → non-empty case without break" as invalid
-- [ ] ❌ Transform `SwitchStatement` to `while True:` wrapper
-- [ ] ❌ **CRITICAL**: Evaluate discriminant once and cache in temp variable
-  - Pattern: `_switch_disc = discriminant_expr; while True: if js_strict_eq(_switch_disc, case1): ...`
-  - This prevents re-evaluation if discriminant has side effects or if cases mutate referenced variables
-  - Ensures correct semantics when discriminant is an expression with side effects
-- [ ] ❌ Build nested `if/elif/else` for cases
-- [ ] ❌ **CRITICAL**: Use strict equality (`js_strict_eq`) for ALL case matching
-  - Generate `js_strict_eq(_switch_disc, case_value)` (NOT Python `==`)
-  - This matches JS switch semantics (strict comparison, identity for objects)
+  - Error message: "Fall-through between non-empty cases is unsupported; add explicit break statement at line X"
+
+#### Step 2: Cache Discriminant in Temp Variable
+- [ ] ❌ **CRITICAL**: Evaluate discriminant expression once and store in temp variable
+  - Generate unique temp name: `__js_switch_disc_<id>` (use switch ID from pre-pass)
+  - Pattern: `__js_switch_disc_1 = discriminant_expr`
+  - Prevents re-evaluation if discriminant has side effects (e.g., `switch(i++)`)
+  - Prevents re-dispatch if case bodies mutate variables referenced in discriminant
+  - This temp is used for ALL subsequent case comparisons
+
+#### Step 3: Transform to `while True` Wrapper
+- [ ] ❌ Transform `SwitchStatement` to `while True:` block structure
+  - Wrapper pattern:
+    ```python
+    __js_switch_disc_1 = discriminant_expr
+    while True:
+        if js_strict_eq(__js_switch_disc_1, case1_value):
+            # case1 body
+            break  # synthesized if not present
+        elif js_strict_eq(__js_switch_disc_1, case2_value):
+            # case2 body
+            break  # synthesized if not present
+        else:  # default case
+            # default body
+            break  # always synthesized
+        break  # safety break (should never reach)
+    ```
+  - The `while True` allows user `break` statements to exit the switch
+
+#### Step 4: Build Nested `if/elif/else` for Cases
+- [ ] ❌ Generate nested conditional chain for cases:
+  - First case → `if js_strict_eq(__js_switch_disc, case_value):`
+  - Subsequent cases → `elif js_strict_eq(__js_switch_disc, case_value):`
+  - Default case → `else:` (if present)
+  - Empty cases (aliases) → chain multiple conditions: treat `case 1: case 2: stmt;` as `if (...case1...) or (...case2...): stmt`
+
+#### Step 5: Use Strict Equality for ALL Case Matching
+- [ ] ❌ **CRITICAL**: Use `js_strict_eq()` runtime helper (NOT Python `==`) for every case comparison
+  - Generate: `js_strict_eq(__js_switch_disc, case_value)` for each case
+  - This matches JS switch semantics (strict comparison, identity for objects/arrays/functions)
   - Ensures `switch (x) { case {}: ... }` doesn't match a different object literal
-  - Add unit test matrix for object/array/function identity, NaN, null/undefined, primitive cases in switch
-- [ ] ❌ **CRITICAL**: Synthesize `break` at end of default/last non-empty case
-  - Prevents accidental loop when discriminant value changes due to user code in cases
-  - Ensures switch doesn't loop infinitely
-  - Rule: Wrapper always executes once per entry; at end of any taken branch (including default), synthesize `break` regardless of whether discriminant changes mid-execution
-- [ ] ❌ Track whether case has `break`; synthesize `break` at end of switch
-- [ ] ❌ Handle `default` case as final `else`
-- [ ] ❌ Error if `continue` appears inside switch (use ancestry info from pre-pass)
-- [ ] ❌ Allow fall-through for consecutive empty cases (case aliases)
-- [ ] ❌ Document: Each non-empty case should end with explicit `break` or early exit (return/throw)
+  - Ensures `switch (x) { case NaN: ... }` never matches (NaN !== NaN)
+  - Handle primitives vs objects correctly (value equality vs identity)
+
+#### Step 6: Synthesize `break` at End of Taken Branch
+- [ ] ❌ **CRITICAL**: Synthesize `break` statement at the end of each case body if not already present
+  - Check if case body ends with `break`, `return`, or `throw`
+  - If not, append `break` statement
+  - Applies to: all non-empty cases AND default case
+  - Prevents infinite loop if user code in case mutates variables
+  - Rule: Each taken branch must exit the `while True` wrapper exactly once
+
+#### Step 7: Handle Default Case
+- [ ] ❌ Transform `default` case as final `else` clause in the conditional chain
+  - If no default case present, no `else` clause (fall through to final safety `break`)
+  - If default case present, emit `else: default_body; break`
+
+#### Step 8: Error on `continue` Inside Switch
+- [ ] ❌ Use ancestry info from pre-pass (Section 2.4) to detect `continue` inside switch
+  - Error message: "Continue statement inside switch is not supported. Use break to exit switch, or refactor to use a loop."
+  - This prevents confusion with loop semantics
+
+#### Step 9: Documentation
+- [ ] ❌ Document in code comments and user docs:
+  - Each non-empty case must end with explicit `break`, `return`, or `throw`
+  - Fall-through between non-empty cases is not supported (static validation will catch this)
+  - Consecutive empty cases are supported as aliases
+  - Discriminant is evaluated once at switch entry and cached
 
 **Test:**
 ```javascript
@@ -701,14 +790,24 @@ switch (x) {
   - Arrays/strings already use subscript naturally
 - [ ] ❌ Transform `MemberExpression` with `computed: true` (bracket access) → Python subscript
 - [ ] ❌ **Exception**: `.length` property detection (handled separately in 3.4)
-  - Detect `.length` specifically and map to `len()`
+  - Detect `.length` specifically and map to `len()` for reads
   - All other properties use subscript
-  - **Array `.length = n` assignment is UNSUPPORTED** and will error
-    - ES5 allows it and truncates/extends; our implementation does not
-    - Error code: `E_LENGTH_ASSIGN`
-    - Error message: "Assignment to array .length property is not supported. Array length in this transpiler is read-only."
-    - Explicit validation in Phase 3.1/3.4: Check if assignment target is `.length` on array-like and error
-    - Add to "Known Limitations" documentation
+  - **Array `.length = n` assignment**:
+    - **SPECIAL CASE SUPPORTED**: `arr.length = 0` (literal zero only) → `arr.clear()`
+      - Very common pattern for clearing arrays in JavaScript
+      - Only literal `0` supported (not variables, not expressions like `1 - 1`)
+      - Static check during transformation: `node.right.type === 'Literal' && node.right.value === 0`
+      - Map to Python `arr.clear()` (Python 3.3+) for clarity and correctness
+      - High practical value: appears in many real-world code snippets
+      - Low implementation risk: simple special case with clear semantics
+    - **ALL OTHER VALUES UNSUPPORTED**: `arr.length = n` where `n != 0` (literal) → error
+      - ES5 allows arbitrary truncate/extend; our implementation does not
+      - Error code: `E_LENGTH_ASSIGN`
+      - Error message: "Assignment to array .length is only supported for .length = 0 (clear pattern). Arbitrary length assignment (truncate/extend) is not supported."
+      - Explicit validation in Phase 3.1/3.4: Check if assignment target is `.length`
+        - If RHS is literal `0`: emit `arr.clear()`
+        - Otherwise (including variables, expressions, non-zero literals): error with `E_LENGTH_ASSIGN`
+    - Document in "Known Limitations" with explanation of supported exception
 - [ ] ❌ Consider supporting string-literal keys in object literals (beyond identifier keys)
   - Current scope: `{a: 1}` (identifier key)
   - Enhanced: `{'a': 1}` (string-literal key) covers more real-world snippets
@@ -732,8 +831,36 @@ switch (x) {
 
 ### 3.2 Call Expression Framework
 - [ ] ❌ Transform `CallExpression` → Python `Call`
-- [ ] ❌ Create lookup tables for special cases (Math, String methods)
-- [ ] ❌ Default: direct call mapping
+- [ ] ❌ Create lookup tables for special cases (Math, String methods, global functions)
+- [ ] ❌ **Detect and handle global function calls** (Critical Correctness #26):
+  - **Supported (map to runtime helpers)**:
+    - `isNaN(x)` → `js_isnan(x)` runtime helper (uses `js_to_number` then `_js_math.isnan`)
+    - `isFinite(x)` → `js_isfinite(x)` runtime helper (uses `js_to_number` then `_js_math.isfinite`)
+    - Add `from js_compat import js_isnan, js_isfinite` via import manager when used
+  - **Out of scope (error with helpful alternatives)**:
+    - `parseInt(str, radix)` → ERROR with code `E_PARSEINT_UNSUPPORTED`
+      - Message: "parseInt() is not supported. Use int(str) for base-10 or implement custom parsing."
+    - `parseFloat(str)` → ERROR with code `E_PARSEFLOAT_UNSUPPORTED`
+      - Message: "parseFloat() is not supported. Use float(str) for simple cases."
+    - `Number(x)` → ERROR with code `E_NUMBER_CONSTRUCTOR_UNSUPPORTED`
+      - Message: "Number() constructor is not supported. Use js_to_number() runtime helper or explicit numeric coercion."
+    - `String(x)` → ERROR with code `E_STRING_CONSTRUCTOR_UNSUPPORTED`
+      - Message: "String() constructor is not supported. Use string concatenation ('' + x) or explicit conversion."
+    - `Boolean(x)` → ERROR with code `E_BOOLEAN_CONSTRUCTOR_UNSUPPORTED`
+      - Message: "Boolean() constructor is not supported. Use js_truthy() runtime helper or explicit comparison."
+    - `RegExp(pattern, flags)` → ERROR with code `E_REGEXP_CONSTRUCTOR_UNSUPPORTED`
+      - Message: "RegExp() constructor is not supported. Use regex literals /pattern/flags instead."
+- [ ] ❌ Default: direct call mapping (for user-defined functions)
+
+**Test:** `isNaN('abc')` → `js_isnan('abc')` → `True`
+**Test:** `isFinite('123')` → `js_isfinite('123')` → `True`
+**Test:** `isFinite(Infinity)` → `js_isfinite(_js_math.inf)` → `False`
+**Test (error):** `parseInt('42', 10)` → ERROR `E_PARSEINT_UNSUPPORTED`: "parseInt() is not supported. Use int(str) for base-10..."
+**Test (error):** `parseFloat('3.14')` → ERROR `E_PARSEFLOAT_UNSUPPORTED`
+**Test (error):** `Number('5')` → ERROR `E_NUMBER_CONSTRUCTOR_UNSUPPORTED`
+**Test (error):** `String(42)` → ERROR `E_STRING_CONSTRUCTOR_UNSUPPORTED`
+**Test (error):** `Boolean(1)` → ERROR `E_BOOLEAN_CONSTRUCTOR_UNSUPPORTED`
+**Test (error):** `new RegExp('test', 'i')` → ERROR `E_REGEXP_CONSTRUCTOR_UNSUPPORTED`
 
 ---
 
@@ -766,6 +893,10 @@ switch (x) {
 **Test:** `'hello'.length` → `len('hello')` → 5
 **Test:** `[1, 2, 3].length` → `len([1, 2, 3])` → 3
 **Test:** `var arr = [1, 2, 3]; delete arr[1]; arr.length` → still 3
+**Test (clear pattern):** `var arr = [1, 2, 3]; arr.length = 0;` → `arr.clear()` → `arr` becomes `[]`
+**Test (error on non-zero literal):** `arr.length = 5;` → error with code `E_LENGTH_ASSIGN`: "Assignment to array .length is only supported for .length = 0"
+**Test (error on variable):** `var n = 0; arr.length = n;` → error with code `E_LENGTH_ASSIGN` (not literal zero)
+**Test (error on expression):** `arr.length = 1 - 1;` → error with code `E_LENGTH_ASSIGN` (expression, not literal)
 
 ---
 
@@ -773,21 +904,23 @@ switch (x) {
 - [ ] ❌ Map `regex.test(str)` method calls
   - Transform `regex.test(str)` → `bool(regex.search(str))` (Python re.search returns Match or None)
   - Assumes `regex` is a compiled regex object from Phase 4
+  - **'g' flag validation**: If regex literal has 'g' flag → ERROR with code `E_REGEX_GLOBAL_CONTEXT`
   - Add test for regex literal with `.test()`: `/\d+/.test('123')` → `True`
+  - Add test for 'g' rejection: `/test/g.test('str')` → ERROR `E_REGEX_GLOBAL_CONTEXT`
 - [ ] ❌ Map `str.replace(regex, repl)` with regex argument
-  - **SPECIAL CASE**: Allow 'g' flag ONLY for `String.prototype.replace` (common real-world pattern)
-  - **Without 'g' flag**: `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
-  - **With 'g' flag**: `str.replace(regex_with_g, repl)` → `regex.sub(repl, str, count=0)` (unlimited replacements, global)
+  - **UNIFORM POLICY**: 'g' flag allowed ONLY for inline regex literals in `String.prototype.replace` (NOT stored variables)
+  - **Without 'g' flag**: `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement)
+  - **With 'g' flag (inline literal ONLY)**: `'aaa'.replace(/a/g, 'b')` → `regex.sub('b', 'aaa', count=0)` (unlimited replacements)
     - **CRITICAL**: `count=0` in Python `.sub()` means "unlimited replacements" (NOT "zero replacements")
-    - Python docs: count=0 is the default, meaning replace all occurrences
     - The compiled regex does NOT encode 'g'; the 'g' flag only controls the `count` parameter value
-  - Ensure `regex` is a compiled regex object from `compile_js_regex()` (which strips 'g' before compilation)
-  - Detect 'g' flag by inspecting original regex literal node flags during AST transformation
-  - **Context validation**: ONLY allow 'g' when regex is an inline literal in replace call
-    - `'aaa'.replace(/a/g, 'b')` → ALLOWED (inline literal)
-    - `var r = /a/g; 'aaa'.replace(r, 'b')` → ERROR (stored variable with 'g' not allowed)
+    - `compile_js_regex()` strips 'g' before compilation (Python re has no global flag)
+  - **Context validation**: Detect regex literal parent node during AST transformation
+    - **ALLOWED**: `'aaa'.replace(/a/g, 'b')` (inline literal in replace call)
+    - **REJECTED**: `var r = /a/g; 'aaa'.replace(r, 'b')` → ERROR `E_REGEX_GLOBAL_CONTEXT`
+    - Error message: "Regex global flag 'g' is only supported in String.prototype.replace with inline literals. Inline the regex in the replace call, or use Python's re.findall()/re.finditer() for global matching."
   - Add test: `'hello world'.replace(/o/, 'O')` → `'hellO world'` (first occurrence only, count=1)
-  - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace, count=0)
+  - Add test: `'aaa'.replace(/a/g, 'b')` → `'bbb'` (global replace allowed)
+  - Add test: `var r = /a/g; 'aaa'.replace(r, 'b')` → ERROR `E_REGEX_GLOBAL_CONTEXT` (stored variable rejected)
 - [ ] ❌ Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope
   - Error with code `E_REGEX_METHOD_UNSUPPORTED`
   - Message: "Regex method 'match/exec' is not supported. Use .test() for boolean checks or Python re module directly."
@@ -960,12 +1093,14 @@ switch (x) {
   - Python: `-1 % 2` → `1` (result has sign of divisor)
   - JS: `-1 % 2` → `-1` (result has sign of dividend)
   - Use: `a - (b * _js_math.trunc(a / b))` to match JS semantics
+- [ ] ❌ Implement `js_sub(a, b)` in runtime:
+  - Coerce operands with `js_to_number()` for full ToNumber semantics
+  - Enables common patterns like `'5' - 2` → `3`
+- [ ] ❌ Implement `js_mul(a, b)` in runtime:
+  - Coerce operands with `js_to_number()` for full ToNumber semantics
 - [ ] ❌ Implement `js_div(a, b)` in runtime:
   - Handle division by zero: `1/0` → `_js_math.inf`, `-1/0` → `-_js_math.inf`
-  - Coerce operands with `js_to_number` if supporting mixed types
-  - Document: numeric-only for demo, or full coercion
-- [ ] ❌ Optional: Implement `js_sub()`, `js_mul()` for full ToNumber coercion
-  - OR: Scope to numeric-only and error on type mismatches (simpler for demo)
+  - Coerce operands with `js_to_number()` for full ToNumber semantics
 - [ ] ❌ Implement `js_negate(x)` for unary minus with coercion (optional, or direct `-` for numbers only)
 
 **Test:** `'5' + 2` → `'52'` (string concatenation)
@@ -981,13 +1116,13 @@ switch (x) {
 
 ### 4.3 UpdateExpression Helpers
 - [ ] ❌ Implement `js_post_inc(container, key)` and `js_post_dec(container, key)` in runtime
-  - For identifiers: Use Python variables (may need code generation strategy instead)
-  - For member access: Increment/decrement and return old value
-  - Alternative: Generate inline Python code with temp variables
-- [ ] ❌ Implement `js_pre_inc(container, key)` and `js_pre_dec(container, key)` if needed
-- [ ] ❌ Decision: Use runtime helpers vs inline temp variable generation
-  - Inline may be cleaner for simple cases: `(_temp := x, x := x + 1, _temp)[2]` for postfix
-  - Runtime helpers may be cleaner for member access: `js_post_inc(obj, 'prop')`
+  - For identifiers: Generate inline Python code with walrus operator for single-eval
+  - For member access: Use runtime helpers to handle read/compute/write with single-evaluation
+  - Postfix returns old value, then increments: `js_post_inc(obj, 'prop')`
+  - Prefix increments, then returns new value: `js_pre_inc(obj, 'prop')`
+- [ ] ❌ Implement `js_pre_inc(container, key)` and `js_pre_dec(container, key)` in runtime
+  - Handle both dict (object) and list (array) targets
+  - Ensure single-evaluation for complex targets like `obj[key()]++`
 
 **Test:** `i++` returns old value, increments variable
 **Test:** `++i` increments then returns new value
@@ -1109,30 +1244,32 @@ switch (x) {
 - [ ] ❌ Implement `compile_js_regex(pattern, flags_str)` in runtime:
   - Map JS flags using aliased import: `i` → `_js_re.IGNORECASE`, `m` → `_js_re.MULTILINE`, `s` → `_js_re.DOTALL`
   - **CRITICAL**: 'g' flag is NOT a compilation flag
-    - **NEVER** pass 'g' to `_js_re.compile()` (Python re doesn't have a global flag)
-    - Strip 'g' from flags_str before compilation: `flags_str.replace('g', '')`
-    - 'g' is a **usage context** flag that controls `.sub()` behavior (not regex compilation)
-  - **SPECIAL CASE**: Allow 'g' flag ONLY when regex is used in `String.prototype.replace` context
-    - Track regex usage context during transformation (AST parent node analysis)
-    - If regex with 'g' is used in replace: compile WITHOUT 'g', then use `count=0` in `.sub()` call
-    - If regex with 'g' is used elsewhere (`.test()`, stored in variable, etc.): error with message "Regex global flag 'g' is only supported in String.prototype.replace. Use Python's re.findall() or re.finditer() for other cases."
+    - **ALWAYS** strip 'g' from flags_str before compilation: `flags_str.replace('g', '')`
+    - Python re doesn't have a global flag; 'g' only controls `.sub()` count parameter
   - Error on unsupported flags (`y`, `u`) with clear message
   - Document: 'y' (sticky) and 'u' (unicode) flags not directly supported
   - **Ensure backslash escaping**: Pattern string must preserve backslashes (e.g., `\d`, `\w`, `\s`)
   - **CRITICAL**: Always emit Python raw strings `r'...'` for regex patterns unless impossible
     - This prevents double-escaping pitfalls
     - If pattern contains both ' and ", choose quote style or escape appropriately
-  - **CRITICAL**: Test escaped backslashes and raw vs cooked strings in final Python string literal
   - Return `_js_re.compile(pattern, flags)` (using aliased import, with 'g' already stripped)
 - [ ] ❌ Add `import re as _js_re` via import manager
-- [ ] ❌ Transform regex `Literal` → `compile_js_regex(pattern, flags_without_g)`
+- [ ] ❌ Transform regex `Literal` → `compile_js_regex(pattern, flags)`
   - Access pattern via `node.regex.pattern` (Acorn structure)
   - Access flags via `node.regex.flags` (Acorn structure)
-  - **Check for 'g' flag**: If present, validate usage context
-  - Track whether regex has 'g' flag separately (for later `.sub()` count determination)
+  - **'g' flag context validation**: If flags contain 'g', validate usage context
+    - **ALLOWED**: Inline literal in `String.prototype.replace` call (detect via parent node analysis)
+    - **REJECTED**: ALL other contexts → ERROR `E_REGEX_GLOBAL_CONTEXT`
+      - Stored in variable: `var r = /a/g;` → ERROR
+      - Used with `.test()`: `/test/g.test('str')` → ERROR
+      - In array literal: `[/a/g]` → ERROR
+      - In object literal: `{pattern: /a/g}` → ERROR
+      - Function argument: `f(/a/g)` → ERROR
+    - Error message: "Regex global flag 'g' is only supported in String.prototype.replace with inline literals. Inline the regex in the replace call, or use Python's re.findall()/re.finditer() for global matching."
+  - Track whether regex has 'g' flag separately (for later `.sub()` count determination in phase 3.5)
   - Pass flags to `compile_js_regex()` (runtime will strip 'g' before compilation)
 
-**Test:** `/hello/i` → `compile_js_regex('hello', 'i')` → case-insensitive regex (no 'g', compiles normally)
+**Test:** `/hello/i` → `compile_js_regex('hello', 'i')` → case-insensitive regex
 
 **Test:** `/\d+/` → `compile_js_regex('\\d+', '')` → pattern preserves backslash correctly in raw string
 
@@ -1140,16 +1277,22 @@ switch (x) {
 
 **Test (allowed 'g' context):** `'aaa'.replace(/a/g, 'b')`
   → Transformation: `_regex = compile_js_regex('a', 'g')` (runtime strips 'g'), then `_regex.sub('b', 'aaa', count=0)`
-  → Result: `'bbb'` (count=0 means unlimited replacements, global behavior)
+  → Result: `'bbb'` (count=0 means unlimited replacements)
 
-**Test (rejected 'g' context - test method):** `/test/g.test('test')`
-  → Error: "Regex global flag 'g' is only supported in String.prototype.replace. Use Python's re.findall() or re.finditer() for other cases."
+**Test (rejected 'g' context - .test() method):** `/test/g.test('test')`
+  → ERROR `E_REGEX_GLOBAL_CONTEXT`: "Regex global flag 'g' is only supported in String.prototype.replace with inline literals."
 
 **Test (rejected 'g' context - variable storage):** `var regex = /a/g; 'aaa'.replace(regex, 'b')`
-  → Error: "Regex global flag 'g' is only supported in String.prototype.replace. Inline the regex literal in the replace call."
+  → ERROR `E_REGEX_GLOBAL_CONTEXT`: "Regex global flag 'g' is only supported in String.prototype.replace with inline literals. Inline the regex in the replace call."
 
 **Test (rejected 'g' context - array literal):** `var patterns = [/a/g, /b/];`
-  → Error: "Regex global flag 'g' is only supported in String.prototype.replace."
+  → ERROR `E_REGEX_GLOBAL_CONTEXT`
+
+**Test (rejected 'g' context - object literal):** `var obj = {pattern: /a/g};`
+  → ERROR `E_REGEX_GLOBAL_CONTEXT`
+
+**Test (rejected 'g' context - function argument):** `function f(r) { return r; } f(/a/g);`
+  → ERROR `E_REGEX_GLOBAL_CONTEXT` at regex literal site
 
 **Test:** `/test/y` → error "Regex sticky flag 'y' is not supported."
 
@@ -1372,7 +1515,8 @@ switch (x) {
 - [ ] ❌ Test: Regex unsupported flags (g, y, u) → error with workaround suggestion
 - [ ] ❌ Test: Nested function called before definition → error: "Nested function hoisting is not supported. Define function 'X' before calling it."
 - [ ] ❌ Test: Delete on identifier → error: "Delete on identifiers is not supported (non-configurable binding)."
-- [ ] ❌ Test: Array `.length = n` assignment → error with code `E_LENGTH_ASSIGN`: "Assignment to array .length property is not supported. Array length in this transpiler is read-only."
+- [ ] ❌ Test: Array `.length = 0` assignment → supported: `arr.length = 0;` → `arr.clear()` (clear pattern exception)
+- [ ] ❌ Test: Array `.length = n` (non-zero) assignment → error with code `E_LENGTH_ASSIGN`: "Assignment to array .length is only supported for .length = 0"
 - [ ] ❌ Test: Augmented assignment with type mismatch → error with code `E_NUM_AUGMENT_COERCION`: "Augmented assignment operators (-=, *=, /=, %=) require numeric operands. Mixed types are not supported."
 - [ ] ❌ Verify error codes (e.g., `E_UNSUPPORTED_FEATURE`, `E_UNSUPPORTED_NODE`, `E_LENGTH_ASSIGN`, `E_NUM_AUGMENT_COERCION`) for programmatic filtering
 - [ ] ❌ Create error code table mapping codes to messages in documentation
@@ -1459,7 +1603,8 @@ switch (x) {
   - **Function declarations in blocks**: Not supported (Annex B); use function expressions instead
   - **No try/catch**: throw raises JSException but cannot be caught in transpiled code
   - **Switch fall-through**: Between non-empty cases not supported (must use explicit break)
-  - **Regex flags**: `g` flag allowed ONLY in `String.prototype.replace` context; `y`, `u` not supported (workarounds: re.findall, etc.)
+  - **Regex 'g' flag**: Allowed ONLY in `String.prototype.replace` with inline literals (e.g., `'aaa'.replace(/a/g, 'b')`). ALL other contexts error with `E_REGEX_GLOBAL_CONTEXT`: stored variables, `.test()`, array/object literals, function args. Use Python's `re.findall()/re.finditer()` for global matching in other contexts.
+  - **Regex flags y, u**: Not supported (sticky, unicode flags); error with workaround suggestions
   - **No closure support**: Beyond lexical nesting (captured variables not mutable across scopes)
   - **Delete on identifiers**: Not supported (error)
   - **For-in enumeration order**: Insertion order for objects, ascending numeric for arrays (ES5 order is implementation-quirky; behavior may differ from some engines)
@@ -1472,6 +1617,7 @@ switch (x) {
   - **'instanceof' operator**: Out of scope; error
   - **void operator**: Supported; `void expr` evaluates expr and returns `undefined`
   - **typeof undeclared**: Supported; `typeof undeclaredVar` returns `'undefined'` without error
+  - **Array .length assignment**: **SPECIAL CASE**: `arr.length = 0` (literal zero) supported → `arr.clear()` (common clear pattern); all other `.length = n` values unsupported (error)
   - **Global functions**: `isNaN`, `isFinite` supported via runtime helpers; `parseInt`, `parseFloat`, `Number()`, `String()`, `Boolean()`, `RegExp()` not supported (error with alternatives)
   - **Date.now()**: Supported; returns milliseconds since epoch
 - [ ] ❌ Provide migration guide (unsupported features and alternatives)
