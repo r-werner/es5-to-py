@@ -110,20 +110,31 @@ Before implementing, ensure these key semantic issues are addressed:
    - Message: "Bitwise operators are not supported. Use Math.floor() to truncate or arithmetic equivalents."
    - Add tests that error clearly with helpful alternatives
 
-26. **Array and Object library methods**: Most array/object methods are **out of scope**.
+26. **Global functions policy**: Explicit decisions for common global functions:
+   - **Out of scope** (error with helpful alternatives):
+     - `parseInt(str, radix)` → Error code `E_PARSEINT_UNSUPPORTED`. Message: "parseInt() is not supported. Use int(str) for base-10 or implement custom parsing."
+     - `parseFloat(str)` → Error code `E_PARSEFLOAT_UNSUPPORTED`. Message: "parseFloat() is not supported. Use float(str) for simple cases."
+     - `RegExp(pattern, flags)` constructor → Error code `E_REGEXP_CONSTRUCTOR_UNSUPPORTED`. Message: "RegExp() constructor is not supported. Use regex literals /pattern/flags instead."
+     - `Number(x)`, `String(x)`, `Boolean(x)` constructors → Error with alternatives (use `js_to_number`, string coercion, `js_truthy`)
+   - **Minimal support** (runtime wrappers):
+     - `isNaN(x)` → `js_isnan(x)` runtime helper (use `js_to_number` then `math.isnan`)
+     - `isFinite(x)` → `js_isfinite(x)` runtime helper (use `js_to_number` then `math.isfinite`)
+   - Document all global function policies in "Known Limitations" and error message tables
+
+27. **Array and Object library methods**: Most array/object methods are **out of scope**.
    - Out of scope: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`, `reduce`, `forEach`, etc.
    - Out of scope: `Object.keys`, `Object.values`, `Object.assign`, etc.
    - Error with code `E_ARRAY_METHOD_UNSUPPORTED` or `E_OBJECT_METHOD_UNSUPPORTED`
    - Message: "Array/Object method 'X' is not supported. Use explicit loops or supported alternatives."
    - Document in "Known Limitations" section
 
-27. **Regex usage beyond literals**: Map common regex usage patterns.
+28. **Regex usage beyond literals**: Map common regex usage patterns.
    - Map `regex.test(str)` → `bool(regex.search(str))` or `js_regex_test(regex, str)` helper
    - Map `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)` (single replacement, matches JS default)
    - Document `String.prototype.match`, `RegExp.prototype.exec` as out of scope (or add minimal helpers)
    - Add explicit tests for `.test()` and `replace()` with regex argument
 
-28. **Loose equality guardrails**: Error on unsupported coercions.
+29. **Loose equality guardrails**: Error on unsupported coercions.
    - If either operand to `==`/`!=` is list/dict/callable → error with code `E_LOOSE_EQ_OBJECT`
    - Message: "Loose equality with objects/arrays is not supported (ToPrimitive coercion complexity). Use strict equality (===) or explicit comparison."
    - Only primitives + null/undefined rules are supported in `js_loose_eq`
@@ -154,7 +165,14 @@ Before implementing, ensure these key semantic issues are addressed:
 ---
 
 ### 1.2 Core AST Infrastructure
-- [ ] ❌ Create `src/parser.ts`: Wrapper around acorn with config `{ ecmaVersion: 5, sourceType: 'script', locations: true, ranges: true }`
+- [ ] ❌ Create `src/parser.ts`: Wrapper around acorn with config:
+  - `ecmaVersion: 5` (ES5 syntax only)
+  - `sourceType: 'script'` (NOT 'module'; prevents module-only syntax)
+  - `locations: true` (for error messages with line/column)
+  - `ranges: true` (for source mapping)
+  - `allowReturnOutsideFunction: false` (enforce return only inside functions)
+  - `allowReserved: true` (ES5 allows reserved words in some contexts)
+  - Verify Acorn node shapes: `node.regex.pattern`, `node.regex.flags`, `SequenceExpression.expressions`
 - [ ] ❌ Create `src/errors.ts`: Define `UnsupportedNodeError`, `UnsupportedFeatureError` with source location formatting
 - [ ] ❌ Create `src/transformer.ts`: Base visitor class/framework for traversing ESTree AST
 - [ ] ❌ Create `src/generator.ts`: Python AST unparsing using `@kriss-u/py-ast`
@@ -234,6 +252,10 @@ Before implementing, ensure these key semantic issues are addressed:
   - `!` → `not js_truthy(...)`
   - `-` (unary minus) → direct for numbers, or use `js_negate()` for coercion
   - `+` (unary plus) → `js_to_number(x)` runtime helper for ToNumber coercion
+  - `void` → evaluate operand for side effects, then emit `JSUndefined`
+    - Common idiom: `void 0` yields `undefined`
+    - Pattern: `void expr` → `(expr, JSUndefined)[1]` or statement-temp: `expr; result = JSUndefined`
+    - Ensure operand is evaluated (for side effects like `void f()`)
   - `typeof`, `delete` → defer to Phase 4
 - [ ] ❌ Transform `ConditionalExpression` (ternary) → Python `IfExp` with `js_truthy()` on test
 - [ ] ❌ Create temp allocator utility in transformer for generating unique temp variable names
@@ -255,6 +277,10 @@ Before implementing, ensure these key semantic issues are addressed:
 **Test (nested logicals):** `a && b && c` → temp for `a`, temp for `a && b`; single-eval across nesting
 
 **Test (logical with side effects):** `(x = 1) && (y = 2)` → both assignments happen if first is truthy; returns second assignment value
+
+**Test (void operator):** `void 0` → `JSUndefined`
+
+**Test (void with side effects):** `void (x = 5)` → evaluates `x = 5`, returns `JSUndefined`
 
 ---
 
@@ -307,6 +333,16 @@ Before implementing, ensure these key semantic issues are addressed:
 
 ### 1.6 Function Declarations and Return
 - [ ] ❌ Transform `Program` → Python `Module`
+- [ ] ❌ **CRITICAL**: Validate function declarations inside blocks
+  - ES5 function declarations inside blocks (e.g., `if (cond) { function f() {} }`) have implementation-specific behavior (Annex B)
+  - Acorn will parse them, but semantics are surprising/inconsistent across engines
+  - **DECISION FOR DEMO**: Either:
+    - (a) **Recommended**: Disallow with validator (error code `E_FUNCTION_IN_BLOCK`) and helpful message: "Function declarations inside blocks are not supported (Annex B). Use var f = function() {} instead."
+    - (b) Normalize to `var f = function() {}` (FunctionExpression) before transform
+  - Only allow function declarations at:
+    - Program top-level
+    - Immediately inside function bodies (nested functions)
+  - Detect during AST traversal: if `FunctionDeclaration` parent is not `Program` or `FunctionDeclaration.body`, error or normalize
 - [ ] ❌ Transform `FunctionDeclaration` → Python `FunctionDef`
 - [ ] ❌ Map function parameters to Python args
 - [ ] ❌ Transform function body (`BlockStatement` → list of Python statements)
@@ -328,6 +364,8 @@ Before implementing, ensure these key semantic issues are addressed:
 **Test:** `function f() { return; }` → `return JSUndefined`, verify `f() === undefined` is `True`
 
 **Test:** `function f() { if (true) return; return 1; }` → first return is `JSUndefined`
+
+**Test (function in block):** `if (true) { function f() {} }` → error `E_FUNCTION_IN_BLOCK` with message suggesting `var f = function() {}`
 
 ---
 
@@ -555,6 +593,8 @@ switch (x) {
 
 **Test (switch discriminant caching):** `var i = 0; switch(i++) { case 0: i = 10; case 1: return i; }` → discriminant evaluated once at switch entry (i++ happens once); verify with side-effect test
 
+**Test (switch discriminant side-effect + case mutation):** `var x = 0; switch(x++) { case 0: x = 5; break; case 1: return 'matched 1'; default: return 'default'; }` → verify discriminant is cached (doesn't re-dispatch after x mutation), returns from case 0 branch
+
 ---
 
 ### 2.9 Phase 2 Integration Tests
@@ -621,8 +661,15 @@ switch (x) {
 - [ ] ❌ Detect `Math.round(x)` → `round(x)` (note: different .5 rounding behavior, document limitation)
 - [ ] ❌ Detect `Math.random()` → `random.random()`, add `import random`
 - [ ] ❌ Detect `Math.PI` → `math.pi`, `Math.E` → `math.e`
+- [ ] ❌ **Add Date.now() mapping**:
+  - `Date.now()` → `js_date_now()` runtime helper (returns milliseconds since epoch as int)
+  - Runtime: `def js_date_now(): return int(time.time() * 1000)` (requires `import time`)
+  - Alternative: `int(JSDate().getTime())` but direct helper is cleaner
+  - Add `import time` via import manager when `Date.now()` is used
 
 **Test:** `Math.sqrt(16)` → `math.sqrt(16)` with `import math`
+
+**Test:** `Date.now()` → `js_date_now()` with `import time`
 
 ---
 
@@ -701,14 +748,14 @@ switch (x) {
 ### 3.8 Import Manager Finalization
 - [ ] ❌ Ensure import manager tracks all required imports
 - [ ] ❌ Emit imports at top of Python module in **deterministic order**:
-  1. Standard library imports (`import math`, `import random`, `import re`)
+  1. Standard library imports (`import math`, `import random`, `import re`, `import time`)
   2. Runtime imports (`from js_compat import ...`)
 - [ ] ❌ **CRITICAL**: Use consistent import style
   - Standard library: `import math` (call via `math.*`)
   - **DO NOT** mix `import math` and `from math import ...`
   - This prevents conflicts and keeps codegen simple
 - [ ] ❌ Deduplicate imports
-- [ ] ❌ **Only import when used**: Do not import `math`/`random`/`re` unless features require them
+- [ ] ❌ **Only import when used**: Do not import `math`/`random`/`re`/`time` unless features require them
 - [ ] ❌ Add tests that assert exact import header format
 - [ ] ❌ Add lint/test for "no unused imports"
 
@@ -731,6 +778,13 @@ switch (x) {
 ## Phase 4: Runtime Gaps
 
 ### 4.1 Strict Equality Helper
+- [ ] ❌ **Add strict equality validator/linter pass**:
+  - Create post-transform validator that scans generated Python AST
+  - Forbid direct Python `Eq`/`NotEq` nodes where source was `===`/`!==`
+  - Ensure ALL `===`/`!==` use `js_strict_eq`/`js_strict_neq` calls (including switch cases)
+  - Flag any missed sites with internal error (prevents regressions)
+  - Run validator as part of transform pipeline before code generation
+  - Add test that intentionally tries to bypass (validates validator catches it)
 - [ ] ❌ Implement `js_strict_eq(a, b)` in runtime:
   - **CRITICAL**: Handle object/array/function identity (NOT value equality)
   - NaN handling: `math.isnan(a) and math.isnan(b)` → `False` (NaN !== NaN)
@@ -757,6 +811,11 @@ switch (x) {
 ---
 
 ### 4.2 Arithmetic and Coercion Helpers
+- [ ] ❌ Implement `js_isnan(x)` and `js_isfinite(x)` in runtime:
+  - `js_isnan(x)`: Use `js_to_number(x)` then `math.isnan(result)`
+  - `js_isfinite(x)`: Use `js_to_number(x)` then `math.isfinite(result)`
+  - Map global `isNaN(x)` → `js_isnan(x)`, `isFinite(x)` → `js_isfinite(x)`
+  - Add to runtime library and import when used
 - [ ] ❌ Implement `js_to_number(x)` in runtime (ToNumber coercion):
   - `None` (null) → `0`
   - `JSUndefined` → `float('nan')`
@@ -851,10 +910,16 @@ switch (x) {
   - `list`, `dict` → `'object'`
   - `callable` → `'function'`
 - [ ] ❌ Transform `UnaryExpression` with operator `typeof` → `js_typeof(...)`
+- [ ] ❌ **CRITICAL SPECIAL CASE**: `typeof undeclaredIdentifier` must NOT error
+  - In JS, `typeof undeclaredVar` returns `'undefined'` without throwing ReferenceError
+  - **Exception to unresolved identifier check**: Exempt `typeof Identifier` from unresolved-identifier validation
+  - Always returns `'undefined'` for undeclared identifiers (no need for special runtime helper; just return string literal)
+  - Pattern: If `typeof` operand is `Identifier` and not in scope, emit `'undefined'` directly (or `js_typeof(JSUndefined)`)
 - [ ] ❌ Transform identifier `undefined` (when used as value) → `JSUndefined`
 
 **Test:** `typeof null` → `'object'`, `typeof undefined` → `'undefined'`
 **Test:** `var x; typeof x` → `'undefined'` (uninitialized var)
+**Test:** `typeof undeclaredVariable` → `'undefined'` (does NOT throw error; special case for typeof)
 
 ---
 
@@ -1052,6 +1117,18 @@ switch (x) {
 
 ## Phase 5: Tests + Playground
 
+### 5.1 Critical Test Requirements from Architect Feedback
+- [ ] ❌ **typeof undeclared**: `typeof undeclaredVar` → `'undefined'` without error
+- [ ] ❌ **void operator**: `void 0` → `JSUndefined`, `void (x = 5)` → evaluates assignment, returns `JSUndefined`
+- [ ] ❌ **For-update + continue with SequenceExpression**: `for(i=0; i<10; i++, j++) { if (cond) continue; }` → ensure both `i++` and `j++` execute on continue
+- [ ] ❌ **For-update + continue in nested loops**: Verify only owning loop's update executes on continue (not inner loop's update)
+- [ ] ❌ **Member-target single-eval under augassign**: `obj()[key()] += f()` → evaluate `obj()` and `key()` exactly once
+- [ ] ❌ **Member-target single-eval under update**: `obj[key++]++` → evaluate `obj` and `key++` exactly once
+- [ ] ❌ **Regex escaping**: `\d` patterns preserved exactly, quotes chosen to avoid extra escaping
+- [ ] ❌ **Mixed equality in switch**: Cases with NaN, -0/+0, object literals (identity), primitives
+- [ ] ❌ **isNaN/isFinite**: `isNaN('abc')` → `true`, `isFinite('123')` → `true`, `isFinite(Infinity)` → `false`
+- [ ] ❌ **Date.now()**: Returns milliseconds since epoch as int
+
 ### 5.1 Golden Test Suite
 - [ ] ❌ Create `tests/golden/` directory with JS input files and expected Python output
 - [ ] ❌ Test: Arithmetic and logic operators
@@ -1155,6 +1232,15 @@ switch (x) {
 - [ ] ❌ **Pin versions**: Document Node.js version (e.g., Node 18 LTS) and Python version (≥3.8) for CI and execution parity tests
 - [ ] ❌ Document runtime library API with exact function signatures and behavior
 - [ ] ❌ **Add performance note**: "This demo prioritizes correctness over speed; runtime helpers add overhead by design."
+- [ ] ❌ **Add "Unsupported but common patterns" troubleshooting table**:
+  - `parseInt(str, radix)` → `int(str)` for base-10 or implement custom parsing
+  - `parseFloat(str)` → `float(str)` for simple cases
+  - Bitwise `| 0` truncation → `Math.floor(x)` or `int(x)`
+  - `Array.prototype.map(fn)` → explicit for-loop
+  - `Array.prototype.filter(fn)` → explicit for-loop with conditional append
+  - Loose equality `==` with objects → use strict equality `===` or explicit comparison
+  - Comma expressions in non-for contexts → separate statements or use `--use-walrus`
+  - `RegExp(pattern, flags)` constructor → regex literals `/pattern/flags`
 - [ ] ❌ **Document error codes**: Create table mapping error codes to messages
   - `E_UNSUPPORTED_FEATURE`: Feature outside ES5 subset (e.g., `let`, `const`, `class`)
   - `E_UNSUPPORTED_NODE`: AST node type not implemented
@@ -1169,6 +1255,10 @@ switch (x) {
   - `E_IN_OPERATOR_UNSUPPORTED`: 'in' operator not supported
   - `E_UNRESOLVED_IDENTIFIER`: Undeclared identifier
   - `E_INSTANCEOF_UNSUPPORTED`: 'instanceof' operator not supported
+  - `E_FUNCTION_IN_BLOCK`: Function declaration inside block (Annex B)
+  - `E_PARSEINT_UNSUPPORTED`: parseInt() not supported
+  - `E_PARSEFLOAT_UNSUPPORTED`: parseFloat() not supported
+  - `E_REGEXP_CONSTRUCTOR_UNSUPPORTED`: RegExp() constructor not supported
   - Others as needed
 - [ ] ❌ **Add troubleshooting section**: Map common patterns to alternatives
   - "Use Math.floor() instead of bitwise OR `| 0` to truncate"
@@ -1200,6 +1290,8 @@ switch (x) {
   - **Assignment-in-expression**: Statement-temp lifting default; use --use-walrus for inline pattern
   - **'in' operator**: Out of scope (property existence checking); error with workaround
   - **'instanceof' operator**: Out of scope; error
+  - **void operator**: Supported; `void expr` evaluates expr and returns `undefined`
+  - **Global functions**: `isNaN`, `isFinite` supported via runtime helpers; `parseInt`, `parseFloat`, `Number()`, `String()`, `Boolean()`, `RegExp()` not supported (error with alternatives)
 - [ ] ❌ Provide migration guide (unsupported features and alternatives)
 - [ ] ❌ Document arithmetic coercion strategy decision (numeric-only recommended for demo)
   - Exact coercion tables in runtime docstrings (strings with leading/trailing whitespace, empty string, hex/octal forms if supported)
