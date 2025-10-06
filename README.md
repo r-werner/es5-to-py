@@ -6,11 +6,11 @@ A technology demonstration transpiler that converts a defined subset of ES5 Java
 
 This transpiler handles core ES5 language features while explicitly failing fast on unsupported constructs with clear error messages. It's designed as a learning tool and demonstration of compiler engineering principles, not for production JavaScript-to-Python migration.
 
-**Current Status**: Milestone S3 complete (4/9 milestones, 44% complete)
+**Current Status**: Milestone S4 complete (5/9 milestones, 56% complete)
 
 ## Features
 
-### ✅ Currently Supported (S0-S3)
+### ✅ Currently Supported (S0-S4)
 
 - **Literals**: String, number, boolean, null, regex patterns
 - **Variables**: `var` declarations with proper `undefined` handling
@@ -23,10 +23,11 @@ This transpiler handles core ES5 language features while explicitly failing fast
 - **Expressions**: Ternary (`? :`), member access, array literals, object literals
 - **Type Coercion**: Full JavaScript ToNumber semantics
 - **Runtime Compatibility**: `undefined`, `NaN`, `Infinity`, truthiness, strict equality
+- **Control Flow**: `if`/`else`, `while`, `break`, `continue` with proper hoisting
 
-### 🚧 In Development (S4-S9)
+### 🚧 In Development (S5-S9)
 
-- Control flow: `if`/`else`, `while`, `for`, `for-in`, `switch`, `break`, `continue`
+- Advanced control flow: `for`, `for-in`, `switch`
 - Built-in methods: Math, String, Array operations
 - Type operators: `typeof`, `delete`
 - Date handling, regex operations
@@ -201,7 +202,7 @@ npm test -- test_functions
 python3 -m pytest tests/runtime/ -v
 ```
 
-**Current Test Coverage**: 80/80 tests passing (100%)
+**Current Test Coverage**: 109/109 tests passing (100%)
 
 ### Development Workflow
 
@@ -246,8 +247,8 @@ case 'WhileStatement': return this.visitWhileStatement;
 | S1: Pipeline | ✅ Complete | Parser, transformer scaffold, CLI | 2-3 days |
 | S2: Expressions I | ✅ Complete | Literals, operators, ternary | 3-4 days |
 | S3: Assignments + Functions | ✅ Complete | Variables, assignments, functions | 3-4 days |
-| S4: Control Flow I | 🚧 Next | if/else, while, break/continue | 2-3 days |
-| S5: For + Sequence | ⏳ Planned | C-style for loops, ++/-- | 3-4 days |
+| S4: Control Flow I | ✅ Complete | if/else, while, break/continue | 2-3 days |
+| S5: For + Sequence | 🚧 Next | C-style for loops, ++/-- | 3-4 days |
 | S6: Switch + For-in | ⏳ Planned | Switch statements, for-in loops | 3-4 days |
 | S7: Library + Methods | ⏳ Planned | Math, String, Array methods | 3-4 days |
 | S8: Regex + Type Ops | ⏳ Planned | Regex, typeof, delete | 3-4 days |
