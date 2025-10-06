@@ -8,55 +8,53 @@ import { Transformer } from '../../src/transformer.js';
 import { ImportManager } from '../../src/import-manager.js';
 import { unparse } from 'py-ast';
 
-function transpile(jsCode: string): { python: string; imports: string } {
+function transpile(jsCode: string): string {
   const jsAst = parseJS(jsCode);
   const importManager = new ImportManager();
   const transformer = new Transformer(importManager);
   const pythonAst = transformer.transform(jsAst);
-  const python = unparse(pythonAst);
-  const imports = importManager.emitHeader();
-  return { python, imports };
+  return unparse(pythonAst);
 }
 
 describe('S3: Arithmetic Operators', () => {
   test('Addition operator', () => {
-    const { python, imports } = transpile('5 + 3');
+    const python = transpile('5 + 3');
+    expect(python).toContain('from runtime.js_compat import js_add');
     expect(python).toContain('js_add(5, 3)');
-    expect(imports).toContain('from runtime.js_compat import js_add');
   });
 
   test('Subtraction operator', () => {
-    const { python, imports } = transpile('10 - 3');
+    const python = transpile('10 - 3');
+    expect(python).toContain('from runtime.js_compat import js_sub');
     expect(python).toContain('js_sub(10, 3)');
-    expect(imports).toContain('from runtime.js_compat import js_sub');
   });
 
   test('Multiplication operator', () => {
-    const { python, imports } = transpile('5 * 3');
+    const python = transpile('5 * 3');
+    expect(python).toContain('from runtime.js_compat import js_mul');
     expect(python).toContain('js_mul(5, 3)');
-    expect(imports).toContain('from runtime.js_compat import js_mul');
   });
 
   test('Division operator', () => {
-    const { python, imports } = transpile('10 / 2');
+    const python = transpile('10 / 2');
+    expect(python).toContain('from runtime.js_compat import js_div');
     expect(python).toContain('js_div(10, 2)');
-    expect(imports).toContain('from runtime.js_compat import js_div');
   });
 
   test('Modulo operator', () => {
-    const { python, imports } = transpile('10 % 3');
+    const python = transpile('10 % 3');
+    expect(python).toContain('from runtime.js_compat import js_mod');
     expect(python).toContain('js_mod(10, 3)');
-    expect(imports).toContain('from runtime.js_compat import js_mod');
   });
 
   test('Unary plus operator', () => {
-    const { python, imports } = transpile('+"5"');
+    const python = transpile('+"5"');
+    expect(python).toContain('from runtime.js_compat import js_to_number');
     expect(python).toContain('js_to_number(');
-    expect(imports).toContain('from runtime.js_compat import js_to_number');
   });
 
   test('Complex arithmetic expression', () => {
-    const { python } = transpile('(5 + 3) * 2');
+    const python = transpile('(5 + 3) * 2');
     expect(python).toContain('js_mul(js_add(5, 3), 2)');
   });
 });

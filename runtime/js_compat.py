@@ -5,6 +5,7 @@ Provides runtime helpers to bridge semantic gaps between JavaScript and Python.
 This module is imported by all transpiled code.
 """
 
+from typing import Union
 import math as _js_math
 
 # ============================================================================
@@ -151,7 +152,7 @@ def js_strict_neq(a: object, b: object) -> bool:
 # Arithmetic and Coercion
 # ============================================================================
 
-def js_to_number(x: object) -> float | int:
+def js_to_number(x: object) -> Union[float, int]:
     """
     JavaScript ToNumber coercion.
 
@@ -197,25 +198,32 @@ def js_add(a: object, b: object) -> object:
     - Otherwise → numeric addition with ToNumber coercion
     """
     if isinstance(a, str) or isinstance(b, str):
-        # String concatenation (coerce both to strings)
-        a_str = 'undefined' if a is JSUndefined else str(a) if a is not None else 'null'
-        b_str = 'undefined' if b is JSUndefined else str(b) if b is not None else 'null'
-        return a_str + b_str
+        # String concatenation (coerce both to strings with JS ToString semantics)
+        def to_js_string(x: object) -> str:
+            if x is JSUndefined:
+                return 'undefined'
+            if x is None:
+                return 'null'
+            if isinstance(x, bool):
+                return 'true' if x else 'false'
+            return str(x)
+
+        return to_js_string(a) + to_js_string(b)
     # Numeric addition
     return js_to_number(a) + js_to_number(b)
 
 
-def js_sub(a: object, b: object) -> float | int:
+def js_sub(a: object, b: object) -> Union[float, int]:
     """JavaScript - operator (ToNumber coercion)."""
     return js_to_number(a) - js_to_number(b)
 
 
-def js_mul(a: object, b: object) -> float | int:
+def js_mul(a: object, b: object) -> Union[float, int]:
     """JavaScript * operator (ToNumber coercion)."""
     return js_to_number(a) * js_to_number(b)
 
 
-def js_div(a: object, b: object) -> float | int:
+def js_div(a: object, b: object) -> Union[float, int]:
     """
     JavaScript / operator (ToNumber coercion).
 
@@ -238,7 +246,7 @@ def js_div(a: object, b: object) -> float | int:
     return num_a / num_b
 
 
-def js_mod(a: object, b: object) -> float | int:
+def js_mod(a: object, b: object) -> Union[float, int]:
     """
     JavaScript % operator (remainder, not modulo).
 

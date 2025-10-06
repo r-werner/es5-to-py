@@ -22,6 +22,16 @@ export class Transformer {
     this.tempCounter = 0;
   }
 
+  // DRY helpers for common AST patterns
+  private runtimeCall(funcName: string, args: any[]): any {
+    this.importManager.addRuntime(funcName);
+    return PyAST.Call(PyAST.Name(funcName, 'Load'), args, []);
+  }
+
+  private jsTruthyCall(arg: any): any {
+    return this.runtimeCall('js_truthy', [arg]);
+  }
+
   transform(jsAst: Node): any {
     // Entry point for transformation
     return this.visitNode(jsAst);
@@ -178,21 +188,11 @@ export class Transformer {
     const right = this.visitNode(node.right);
 
     if (node.operator === '===') {
-      this.importManager.addRuntime('js_strict_eq');
-      return PyAST.Call(
-        PyAST.Name('js_strict_eq', 'Load'),
-        [left, right],
-        []
-      );
+      return this.runtimeCall('js_strict_eq', [left, right]);
     }
 
     if (node.operator === '!==') {
-      this.importManager.addRuntime('js_strict_neq');
-      return PyAST.Call(
-        PyAST.Name('js_strict_neq', 'Load'),
-        [left, right],
-        []
-      );
+      return this.runtimeCall('js_strict_neq', [left, right]);
     }
 
     // Comparison operators
@@ -217,12 +217,7 @@ export class Transformer {
     };
 
     if (arithmeticOps[node.operator]) {
-      this.importManager.addRuntime(arithmeticOps[node.operator]);
-      return PyAST.Call(
-        PyAST.Name(arithmeticOps[node.operator], 'Load'),
-        [left, right],
-        []
-      );
+      return this.runtimeCall(arithmeticOps[node.operator], [left, right]);
     }
 
     throw new UnsupportedFeatureError(
@@ -235,7 +230,6 @@ export class Transformer {
 
   visitLogicalExpression(node: any): any {
     const temp = this.allocateTemp();
-    this.importManager.addRuntime('js_truthy');
 
     const leftWalrus = PyAST.NamedExpr(
       PyAST.Name(temp, 'Store'),
@@ -245,12 +239,7 @@ export class Transformer {
     const tempLoad = PyAST.Name(temp, 'Load');
     const right = this.visitNode(node.right);
 
-    // DRY: Build js_truthy call once
-    const truthyTest = PyAST.Call(
-      PyAST.Name('js_truthy', 'Load'),
-      [leftWalrus],
-      []
-    );
+    const truthyTest = this.jsTruthyCall(leftWalrus);
 
     if (node.operator === '&&') {
       // a && b → (b if js_truthy(__js_tmp1 := a) else __js_tmp1)
@@ -272,15 +261,7 @@ export class Transformer {
 
   visitUnaryExpression(node: any): any {
     if (node.operator === '!') {
-      this.importManager.addRuntime('js_truthy');
-      return PyAST.UnaryOp(
-        'Not',
-        PyAST.Call(
-          PyAST.Name('js_truthy', 'Load'),
-          [this.visitNode(node.argument)],
-          []
-        )
-      );
+      return PyAST.UnaryOp('Not', this.jsTruthyCall(this.visitNode(node.argument)));
     }
 
     if (node.operator === '-') {
@@ -303,12 +284,7 @@ export class Transformer {
 
     if (node.operator === '+') {
       // Unary plus: ToNumber coercion (S3)
-      this.importManager.addRuntime('js_to_number');
-      return PyAST.Call(
-        PyAST.Name('js_to_number', 'Load'),
-        [this.visitNode(node.argument)],
-        []
-      );
+      return this.runtimeCall('js_to_number', [this.visitNode(node.argument)]);
     }
 
     // typeof, delete, void deferred to other specs
@@ -321,14 +297,8 @@ export class Transformer {
   }
 
   visitConditionalExpression(node: any): any {
-    this.importManager.addRuntime('js_truthy');
-
     return PyAST.IfExp(
-      PyAST.Call(
-        PyAST.Name('js_truthy', 'Load'),
-        [this.visitNode(node.test)],
-        []
-      ),
+      this.jsTruthyCall(this.visitNode(node.test)),
       this.visitNode(node.consequent),
       this.visitNode(node.alternate)
     );
@@ -344,10 +314,10 @@ export class Transformer {
     for (const decl of node.declarations) {
       if (decl.id.type !== 'Identifier') {
         throw new UnsupportedFeatureError(
-          'destructure',
+          'var-destructure',
           decl.id,
           'Destructuring in variable declarations is not supported',
-          'E_DESTRUCTURE'
+          'E_VAR_DESTRUCTURE'
         );
       }
 
@@ -370,6 +340,10 @@ export class Transformer {
   }
 
   visitAssignmentExpression(node: any): any {
+    // S3: Assignment expressions produce statement-level Assign nodes
+    // Walrus operator (assignment-as-expression) is deferred to later specs
+    // when we need assignments in expression contexts (e.g., if ((x = foo())) { ... })
+
     if (node.operator === '=') {
       // Simple assignment
       if (node.left.type === 'Identifier') {
@@ -403,12 +377,15 @@ export class Transformer {
   }
 
   visitAugmentedAssignment(node: any): any {
+    // Note: We use JS coercion helpers (js_sub, js_mul, etc.) for all augmented ops
+    // to match JavaScript's ToNumber semantics. This means 'x -= "3"' coerces to numeric
+    // subtraction, just like in JavaScript. This is intentional and correct per ES5 spec.
     const opMap: Record<string, string> = {
-      '+=': 'js_add',
-      '-=': 'js_sub',
-      '*=': 'js_mul',
-      '/=': 'js_div',
-      '%=': 'js_mod'
+      '+=': 'js_add',      // Handles both string concat and numeric addition
+      '-=': 'js_sub',      // ToNumber coercion on both operands
+      '*=': 'js_mul',      // ToNumber coercion on both operands
+      '/=': 'js_div',      // ToNumber coercion on both operands
+      '%=': 'js_mod'       // ToNumber coercion with JS remainder semantics
     };
 
     if (!opMap[node.operator]) {
@@ -438,19 +415,27 @@ export class Transformer {
       );
     }
 
+    // S3: Member-target augmented assignment deferred
+    // Requires temp variable generation for single-evaluation:
+    //   obj[key] += val  -->  __tmp = obj; __tmp2 = key; __tmp[__tmp2] = js_add(__tmp[__tmp2], val)
+    // Will be implemented when temp variable management is added in later specs
     throw new UnsupportedFeatureError(
       'member-augassign',
       node,
-      'Augmented assignment to member expressions not yet implemented (requires single-eval)',
+      'Augmented assignment to member expressions not yet implemented (requires single-eval with temp variables)',
       'E_MEMBER_AUGASSIGN'
     );
   }
 
   visitFunctionDeclaration(node: any): any {
+    // S4: Function placement validation will be added when control flow blocks are implemented
     const funcName = this.identifierMapper.declare(node.id.name);
 
     // Enter new scope
     this.identifierMapper.enterScope();
+
+    // Reset temp counter to prevent name bleed across functions
+    this.resetTemps();
 
     // Map parameters - collect names while in scope
     const paramNames: string[] = [];
@@ -522,30 +507,8 @@ export class Transformer {
       }
     }
 
-    // Generate imports
-    const importLines = this.importManager.generateImports();
-    const importStatements: any[] = [];
-
-    for (const line of importLines) {
-      if (line.startsWith('import ')) {
-        // Parse: import math as _js_math
-        const match = line.match(/import (\w+) as (\w+)/);
-        if (match) {
-          importStatements.push(
-            PyAST.Import([PyAST.alias(match[1], match[2])])
-          );
-        }
-      } else if (line.startsWith('from ')) {
-        // Parse: from runtime.js_compat import x, y, z
-        const match = line.match(/from ([\w.]+) import (.+)/);
-        if (match) {
-          const names = match[2].split(', ').map(n => PyAST.alias(n.trim(), null));
-          importStatements.push(
-            PyAST.ImportFrom(match[1], names, 0)
-          );
-        }
-      }
-    }
+    // Generate import AST nodes via ImportManager (S3+)
+    const importStatements = this.importManager.generateImportAst(PyAST);
 
     return PyAST.Module([...importStatements, ...statements], []);
   }

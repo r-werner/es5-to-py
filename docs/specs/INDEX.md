@@ -86,8 +86,8 @@ S0 (Foundations)
 - `FunctionDeclaration` with parameters
 - `ReturnStatement` (bare `return` → `return JSUndefined`)
 - `VariableDeclaration` and `VariableDeclarator`
-- `AssignmentExpression`: `=`, `+=` (with `js_add()`), numeric-only `-=`/`*=`/`/=`/`%=`
-- Augmented assignment operators with arithmetic coercion (`js_sub`, `js_mul`, `js_div`, `js_mod`)
+- `AssignmentExpression`: `=` and all augmented operators (`+=`, `-=`, `*=`, `/=`, `%=`)
+- Augmented assignment with ToNumber coercion (`js_add`, `js_sub`, `js_mul`, `js_div`, `js_mod`)
 - Arithmetic operators (`+`, `-`, `*`, `/`, `%`) with proper ToNumber coercion
 - Unary `+` operator for numeric coercion
 - Nested functions (call-after-definition only; error on hoisting)

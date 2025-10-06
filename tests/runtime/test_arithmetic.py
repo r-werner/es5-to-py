@@ -1,7 +1,6 @@
 """Tests for arithmetic operators and ToNumber coercion."""
 
 import math
-import pytest
 from runtime.js_compat import (
     JSUndefined,
     js_to_number,
@@ -91,6 +90,18 @@ class TestJsAdd:
         """'5' - 2 is numeric, but '5' + 2 is string"""
         assert js_add('5', 3) == '53'
 
+    def test_boolean_string_concat(self):
+        """Booleans concatenate as 'true'/'false' in JS (not 'True'/'False')"""
+        assert js_add('x', True) == 'xtrue'
+        assert js_add('x', False) == 'xfalse'
+        assert js_add(True, ' is true') == 'true is true'
+        assert js_add(False, '!') == 'false!'
+
+    def test_null_undefined_string_concat(self):
+        """null/undefined stringify correctly"""
+        assert js_add('value: ', None) == 'value: null'
+        assert js_add('value: ', JSUndefined) == 'value: undefined'
+
 
 class TestJsSub:
     """Test JavaScript - operator."""
@@ -175,3 +186,75 @@ class TestJsMod:
         """Infinity % x → NaN, x % Infinity → x"""
         assert math.isnan(js_mod(math.inf, 2))
         assert js_mod(5, math.inf) == 5
+
+
+class TestAugmentedAssignmentCoercion:
+    """Test augmented assignment operators with ToNumber coercion."""
+
+    def test_subtract_string_number(self):
+        """'5' -= 2 → 3 (string coerced to number)"""
+        x = '5'
+        x = js_sub(x, 2)
+        assert x == 3
+
+    def test_multiply_null(self):
+        """null *= 2 → 0 (null → 0)"""
+        x = None
+        x = js_mul(x, 2)
+        assert x == 0
+
+    def test_divide_string(self):
+        """'10' /= 2 → 5.0"""
+        x = '10'
+        x = js_div(x, 2)
+        assert x == 5.0
+
+    def test_modulo_string(self):
+        """'10' %= 3 → 1"""
+        x = '10'
+        x = js_mod(x, 3)
+        assert x == 1
+
+    def test_add_string_concat(self):
+        """'5' += 2 → '52' (string concat takes precedence)"""
+        x = '5'
+        x = js_add(x, 2)
+        assert x == '52'
+
+    def test_add_number_coercion(self):
+        """5 += '2' → '52' (number becomes string)"""
+        x = 5
+        x = js_add(x, '2')
+        assert x == '52'
+
+    def test_subtract_undefined(self):
+        """undefined -= 1 → NaN"""
+        x = JSUndefined
+        x = js_sub(x, 1)
+        assert math.isnan(x)
+
+
+class TestUnaryPlusCoercion:
+    """Test unary + operator with ToNumber coercion."""
+
+    def test_unary_plus_string(self):
+        """+'5' → 5"""
+        assert js_to_number('5') == 5
+
+    def test_unary_plus_null(self):
+        """+null → 0"""
+        assert js_to_number(None) == 0
+
+    def test_unary_plus_undefined(self):
+        """+undefined → NaN"""
+        assert math.isnan(js_to_number(JSUndefined))
+
+    def test_unary_plus_boolean(self):
+        """+true → 1, +false → 0"""
+        assert js_to_number(True) == 1
+        assert js_to_number(False) == 0
+
+    def test_unary_plus_number(self):
+        """+5 → 5 (passthrough)"""
+        assert js_to_number(5) == 5
+        assert js_to_number(3.14) == 3.14

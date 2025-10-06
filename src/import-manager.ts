@@ -41,4 +41,28 @@ export class ImportManager {
   emitHeader(): string {
     return this.generateImports().join('\n');
   }
+
+  generateImportAst(PyAST: any): any[] {
+    // Generate Python AST nodes for imports (S3+)
+    const importStatements: any[] = [];
+
+    // Stdlib imports with aliases (sorted for determinism)
+    for (const lib of Array.from(this.stdlibImports).sort()) {
+      importStatements.push(
+        PyAST.Import([PyAST.alias(lib, STDLIB_ALIASES[lib])])
+      );
+    }
+
+    // Runtime imports (sorted for determinism)
+    if (this.runtimeImports.size > 0) {
+      const names = Array.from(this.runtimeImports).sort().map(name =>
+        PyAST.alias(name, null)
+      );
+      importStatements.push(
+        PyAST.ImportFrom('runtime.js_compat', names, 0)
+      );
+    }
+
+    return importStatements;
+  }
 }

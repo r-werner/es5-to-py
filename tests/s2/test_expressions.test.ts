@@ -9,7 +9,6 @@ import { describe, test, expect } from 'vitest';
 import { parseJS } from '../../src/parser.js';
 import { Transformer } from '../../src/transformer.js';
 import { ImportManager } from '../../src/import-manager.js';
-import { generatePython } from '../../src/generator.js';
 import { unparse } from 'py-ast';
 
 function transpile(jsCode: string): { python: string; imports: string } {

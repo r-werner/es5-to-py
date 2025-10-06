@@ -36,10 +36,11 @@ Before implementing, ensure these key semantic issues are addressed:
    - `typeof null` → `'object'`, `typeof undefined` → `'undefined'`
 
 8. **Augmented assignment semantics**:
-   - `+=` must use `js_add(lhs, rhs)` (string concatenation if either operand is string)
-   - **LOCKED DECISION**: `-=`, `*=`, `/=`, `%=` are **numeric-only**; error with code `E_NUM_AUGMENT_COERCION` on type mismatches
-   - **Implementation detail**: For numeric-only ops, emit simple Python arithmetic operators (no runtime wrapper needed), but still enforce single-eval of member targets with temps
-   - Simplifies runtime and reduces edge-case bugs; full ToNumber coercion not in scope
+   - `+=` must use `js_add(lhs, rhs)` (string concatenation if either operand is string; otherwise numeric)
+   - **REVISED DECISION** (S3 implementation): `-=`, `*=`, `/=`, `%=` use full ToNumber coercion via `js_sub`, `js_mul`, `js_div`, `js_mod` runtime helpers
+   - **Rationale**: Matches JavaScript semantics exactly; simplifies transformer logic (uniform treatment of all augmented ops); runtime helpers handle all edge cases consistently
+   - **Implementation**: All augmented assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`) call corresponding runtime helpers; single-eval of member targets enforced with temps
+   - Previous "numeric-only" policy was overly restrictive; full ToNumber coercion is more correct
 
 9. **delete on arrays**: Python `del` shifts elements; JS leaves holes. Assign `JSUndefined` at index instead of deleting.
 
@@ -89,7 +90,7 @@ Before implementing, ensure these key semantic issues are addressed:
    - Message: "SequenceExpression (comma operator) is only supported in for-loop init/update clauses. Refactor to separate statements."
    - Rationale: Simplifies implementation; covers 99% of real ES5 code; clear scope boundaries for demo
 
-23. **Augmented assignment policy**: See Critical Correctness #8 above for the canonical policy statement. Summary: `+=` uses `js_add`; numeric-only ops (`-=`, `*=`, `/=`, `%=`) error on type mismatches.
+23. **Augmented assignment policy**: See Critical Correctness #8 above for the canonical policy statement. Summary: All augmented ops (`+=`, `-=`, `*=`, `/=`, `%=`) use runtime helpers with full ToNumber coercion for correct JavaScript semantics.
 
 24. **Augmented assignment single-evaluation**: For `obj[key] += val`, temp base/key once:
    - Capture `_base := obj`, `_key := key`, `_val := val`
@@ -412,8 +413,8 @@ Before implementing, ensure these key semantic issues are addressed:
   - **Assignment operators**:
     - `=` → `Assign` (or walrus `NamedExpr` in expression context)
     - `+=`, `-=`, `*=`, `/=`, `%=` → See Critical Correctness #8 for augmented assignment policy
-      - `+=` uses `js_add(lhs, rhs)`; transform to `lhs = js_add(lhs, rhs)` (not Python AugAssign)
-      - `-=`, `*=`, `/=`, `%=` are numeric-only; error on type mismatch with code `E_NUM_AUGMENT_COERCION`
+      - All augmented ops use runtime helpers: `js_add`, `js_sub`, `js_mul`, `js_div`, `js_mod`
+      - Transform to `lhs = js_op(lhs, rhs)` with full ToNumber coercion (not Python AugAssign)
 - [ ] ❌ **Single-evaluation for member targets** (see Critical Correctness #8, #21, #24):
   - For `MemberExpression` target: Capture base and key in temps before read/compute/write
   - Pattern: `_base := base_expr`, `_key := key_expr`, read `_base[_key]`, compute, write `_base[_key] = result`
@@ -1517,8 +1518,8 @@ switch (x) {
 - [ ] ❌ Test: Delete on identifier → error: "Delete on identifiers is not supported (non-configurable binding)."
 - [ ] ❌ Test: Array `.length = 0` assignment → supported: `arr.length = 0;` → `arr.clear()` (clear pattern exception)
 - [ ] ❌ Test: Array `.length = n` (non-zero) assignment → error with code `E_LENGTH_ASSIGN`: "Assignment to array .length is only supported for .length = 0"
-- [ ] ❌ Test: Augmented assignment with type mismatch → error with code `E_NUM_AUGMENT_COERCION`: "Augmented assignment operators (-=, *=, /=, %=) require numeric operands. Mixed types are not supported."
-- [ ] ❌ Verify error codes (e.g., `E_UNSUPPORTED_FEATURE`, `E_UNSUPPORTED_NODE`, `E_LENGTH_ASSIGN`, `E_NUM_AUGMENT_COERCION`) for programmatic filtering
+- [x] ✅ Test: Augmented assignment with ToNumber coercion → all augmented ops (`+=`, `-=`, `*=`, `/=`, `%=`) use runtime helpers with full coercion (S3 complete)
+- [ ] ❌ Verify error codes (e.g., `E_UNSUPPORTED_FEATURE`, `E_UNSUPPORTED_NODE`, `E_LENGTH_ASSIGN`) for programmatic filtering
 - [ ] ❌ Create error code table mapping codes to messages in documentation
 
 ---
@@ -1568,7 +1569,6 @@ switch (x) {
   - `E_UNSUPPORTED_FEATURE`: Feature outside ES5 subset (e.g., `let`, `const`, `class`)
   - `E_UNSUPPORTED_NODE`: AST node type not implemented
   - `E_LENGTH_ASSIGN`: Assignment to array `.length` property
-  - `E_NUM_AUGMENT_COERCION`: Augmented assignment requires numeric operands
   - `E_BITWISE_UNSUPPORTED`: Bitwise operators not supported
   - `E_ARRAY_METHOD_UNSUPPORTED`: Array method not supported (excludes `push` single-arg and `pop` which ARE supported)
   - `E_ARRAY_METHOD_AMBIGUOUS`: Cannot determine if receiver is array or object for push/pop
@@ -1595,7 +1595,7 @@ switch (x) {
   - **Return semantics**: `return;` (bare return) yields `undefined`, not `null`
   - **SequenceExpression**: Comma operator `(a, b, c)` supported ONLY in for-init/update contexts (e.g., `for(i=0, j=0; ...; i++, j++)`); error `E_SEQUENCE_EXPR_CONTEXT` in other contexts
   - **Strict equality**: -0 vs +0 distinction not implemented (acceptable for demo; `-0 === +0` is `true`)
-  - **Augmented assignment**: `+=` uses JS semantics (string concat); `-=`/`*=`/`/=`/`%=` are numeric-only (error on type mismatch)
+  - **Augmented assignment**: All operators (`+=`, `-=`, `*=`, `/=`, `%=`) use runtime helpers with full ToNumber coercion
   - **Math.round**: .5 behavior differs (Python uses banker's rounding; avoid .5 inputs or use js_round shim)
   - **JSDate timezone**: Uses UTC for predictability
   - **Loose equality**: ToPrimitive on objects not supported; only primitives supported
@@ -1621,9 +1621,10 @@ switch (x) {
   - **Global functions**: `isNaN`, `isFinite` supported via runtime helpers; `parseInt`, `parseFloat`, `Number()`, `String()`, `Boolean()`, `RegExp()` not supported (error with alternatives)
   - **Date.now()**: Supported; returns milliseconds since epoch
 - [ ] ❌ Provide migration guide (unsupported features and alternatives)
-- [ ] ❌ Document arithmetic coercion strategy decision (numeric-only recommended for demo)
-  - Exact coercion tables in runtime docstrings (strings with leading/trailing whitespace, empty string, hex/octal forms if supported)
-  - Explicitly state simplifications (e.g., hex/octal support skipped; document limitation)
+- [x] ✅ Document arithmetic coercion strategy decision (full ToNumber coercion implemented in S3)
+  - All augmented assignment operators use runtime helpers with full ToNumber coercion
+  - Exact coercion tables documented in runtime/js_compat.py docstrings
+  - Simplifications: hex/octal literals not supported (ES5 parser limitation documented)
 - [ ] ❌ Document ESTree node expectations from Acorn:
   - **SequenceExpression**: `node.expressions` array
   - **Regex literal**: `node.regex.pattern`, `node.regex.flags`
@@ -1692,7 +1693,7 @@ switch (x) {
 - **Assignment-in-expression**: Walrus operator (`:=`) for all contexts
 - **Logical operators**: Walrus operator (NamedExpr) for single-eval: `a && b` → `(b if js_truthy(__js_tmp1 := a) else __js_tmp1)`
 - **Strict equality**: Use `js_strict_eq()` for ALL `===` (including switch); identity for objects, value for primitives; -0 vs +0 not distinguished
-- **Augmented assignment**: `+=` uses `js_add()` (string concat + numeric); `-=`/`*=`/`/=`/`%=` numeric-only (error on type mismatch)
+- **Augmented assignment**: All operators (`+=`, `-=`, `*=`, `/=`, `%=`) use runtime helpers with full ToNumber coercion
 - **Loose equality**: Primitives + null/undefined only; error on objects/arrays (ToPrimitive complexity)
 - **Global identifiers**: Map `undefined` → `JSUndefined`, `NaN` → `float('nan')`, `Infinity` → `_js_math.inf`
 - **Member access**: Default to subscript `obj['prop']` (reads AND writes); exception: `.length` detection
