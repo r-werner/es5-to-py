@@ -1,8 +1,9 @@
 # S4: Control Flow I
 
-**Status**: ❌ Not Started
+**Status**: ✅ Complete (2025-10-06)
 **Dependencies**: S0, S1, S3
 **Estimated Effort**: 2-3 days
+**Actual Effort**: < 1 day
 
 ---
 
@@ -424,16 +425,20 @@ for (var i = 0; i < 3; i++) {
 
 ## Done Criteria
 
-- [ ] Two-pass variable hoisting implemented
-- [ ] Hoisted vars initialized to `JSUndefined` at function top
-- [ ] `visitIfStatement` with `js_truthy()` wrapping
-- [ ] `visitWhileStatement` with `js_truthy()` wrapping
-- [ ] Ancestry tagging pre-pass for break/continue validation
-- [ ] `visitBreakStatement` and `visitContinueStatement`
-- [ ] Error on break outside loop/switch
-- [ ] Error on continue outside loop
-- [ ] Error on continue inside switch
-- [ ] All acceptance tests pass
+- [x] Two-pass variable hoisting implemented (`collectVarDeclarations`, `generateHoistedVars`)
+- [x] Hoisted vars initialized to `JSUndefined` at function top (excluding parameters)
+- [x] `visitIfStatement` with `js_truthy()` wrapping
+- [x] `visitWhileStatement` with `js_truthy()` wrapping
+- [x] Ancestry tagging pre-pass (`AncestryTagger` class) for break/continue validation
+- [x] `visitBreakStatement` and `visitContinueStatement`
+- [x] Error on continue inside switch (`E_CONTINUE_IN_SWITCH`)
+- [x] All acceptance tests pass (104/104 tests passing)
+
+**Implementation Notes:**
+- Acorn parser validates break/continue placement at parse time, so bare break/continue outside loops/switches throw `SyntaxError` before reaching the transformer
+- Our `AncestryTagger` primarily validates the switch+continue case that acorn allows but we don't support
+- Single-statement support works for both if and while (e.g., `if (x) return 1;`)
+- Nested loops are properly tagged with unique loop IDs
 
 ---
 

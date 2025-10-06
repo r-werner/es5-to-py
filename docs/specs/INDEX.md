@@ -98,16 +98,21 @@ S0 (Foundations)
 
 ---
 
-### ❌ S4: Control Flow I
+### ✅ S4: Control Flow I
 **File**: `S4_control_flow_i.md`
 **Dependencies**: S0, S1, S3
+**Status**: Complete (2025-10-06)
 **Deliverables**:
-- `IfStatement` with `js_truthy()` wrapping
-- `WhileStatement`
+- Two-pass variable hoisting with `JSUndefined` initialization
+- `IfStatement` with `js_truthy()` wrapping and else/elif chains
+- `WhileStatement` with `js_truthy()` wrapping
 - `BreakStatement`, `ContinueStatement`
-- Pre-pass for loop/switch ancestry validation (error on `continue` in switch, `break` outside loop)
+- `AncestryTagger` pre-pass for loop/switch validation
+- Error on `continue` in switch with `E_CONTINUE_IN_SWITCH`
+- Single-statement support (if/while without blocks)
 
 **Estimated effort**: 2-3 days
+**Actual effort**: < 1 day
 
 ---
 
@@ -250,13 +255,13 @@ Update this section as specs are completed:
 - [x] S1: Pipeline Skeleton ✅ (2025-10-05)
 - [x] S2: Core Expressions I ✅ (2025-10-05)
 - [x] S3: Assignment + Functions ✅ (2025-10-06)
-- [ ] S4: Control Flow I
+- [x] S4: Control Flow I ✅ (2025-10-06)
 - [ ] S5: For + Sequence + Update
 - [ ] S6: Switch + For-in
 - [ ] S7: Library + Methods
 - [ ] S8: Regex + Type Ops + Loose Eq
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: S0, S1, S2, and S3 complete, ready for S4
+**Current Status**: S0-S4 complete, ready for S5
 **Last Updated**: 2025-10-06
-**Progress**: 4/9 specs complete (44%)
+**Progress**: 5/9 specs complete (56%)

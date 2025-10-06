@@ -4,6 +4,94 @@ import { IdentifierMapper } from './identifier-sanitizer.js';
 import { ImportManager } from './import-manager.js';
 import { UnsupportedNodeError, UnsupportedFeatureError } from './errors.js';
 
+/**
+ * AncestryTagger: Pre-pass to tag AST nodes with loop/switch context
+ * for break/continue validation (S4)
+ */
+class AncestryTagger {
+  private loopStack: number[] = [];
+  private switchStack: any[] = [];
+  private loopIdCounter = 0;
+
+  tagAST(ast: any): void {
+    this.traverse(ast);
+  }
+
+  private traverse(node: any): void {
+    if (!node || typeof node !== 'object') return;
+
+    // Tag loop nodes
+    if (node.type === 'WhileStatement' || node.type === 'ForStatement' || node.type === 'ForInStatement') {
+      const loopId = ++this.loopIdCounter;
+      node._loopId = loopId;
+      this.loopStack.push(loopId);
+    }
+
+    // Tag switch nodes
+    if (node.type === 'SwitchStatement') {
+      this.switchStack.push(node);
+    }
+
+    // Validate break/continue
+    if (node.type === 'BreakStatement') {
+      if (this.loopStack.length === 0 && this.switchStack.length === 0) {
+        throw new UnsupportedFeatureError(
+          'break',
+          node,
+          'Break statement outside loop or switch',
+          'E_BREAK_OUTSIDE'
+        );
+      }
+    }
+
+    if (node.type === 'ContinueStatement') {
+      if (this.loopStack.length === 0) {
+        throw new UnsupportedFeatureError(
+          'continue',
+          node,
+          'Continue statement outside loop',
+          'E_CONTINUE_OUTSIDE'
+        );
+      }
+
+      if (this.switchStack.length > 0 && this.loopStack.length > 0) {
+        // Error if any switch in stack (conservative check)
+        throw new UnsupportedFeatureError(
+          'continue-in-switch',
+          node,
+          'Continue statement inside switch is not supported. Use break to exit switch, or refactor to use a loop.',
+          'E_CONTINUE_IN_SWITCH'
+        );
+      }
+    }
+
+    // Annotate node with current loop ID
+    if (this.loopStack.length > 0) {
+      node._currentLoopId = this.loopStack[this.loopStack.length - 1];
+    }
+
+    // Recurse into child nodes
+    for (const key in node) {
+      if (key.startsWith('_')) continue; // Skip metadata
+      if (node[key] && typeof node[key] === 'object') {
+        if (Array.isArray(node[key])) {
+          node[key].forEach((child: any) => this.traverse(child));
+        } else {
+          this.traverse(node[key]);
+        }
+      }
+    }
+
+    // Pop stacks
+    if (node.type === 'WhileStatement' || node.type === 'ForStatement' || node.type === 'ForInStatement') {
+      this.loopStack.pop();
+    }
+    if (node.type === 'SwitchStatement') {
+      this.switchStack.pop();
+    }
+  }
+}
+
 export class Transformer {
   private identifierMapper = new IdentifierMapper();
   private tempCounter = 0;
@@ -32,7 +120,57 @@ export class Transformer {
     return this.runtimeCall('js_truthy', [arg]);
   }
 
+  // S4: Variable hoisting helpers
+  private collectVarDeclarations(node: any): Set<string> {
+    const vars = new Set<string>();
+
+    const traverse = (n: any): void => {
+      if (!n || typeof n !== 'object') return;
+
+      if (n.type === 'VariableDeclaration' && n.kind === 'var') {
+        for (const decl of n.declarations) {
+          if (decl.id.type === 'Identifier') {
+            vars.add(decl.id.name);
+          }
+        }
+      }
+
+      // Recurse into child nodes (except nested functions)
+      if (n.type !== 'FunctionDeclaration' && n.type !== 'FunctionExpression') {
+        for (const key in n) {
+          if (n[key] && typeof n[key] === 'object') {
+            if (Array.isArray(n[key])) {
+              n[key].forEach(traverse);
+            } else {
+              traverse(n[key]);
+            }
+          }
+        }
+      }
+    };
+
+    traverse(node);
+    return vars;
+  }
+
+  private generateHoistedVars(varNames: Set<string>): any[] {
+    if (varNames.size === 0) return [];
+
+    this.importManager.addRuntime('JSUndefined');
+    return Array.from(varNames).map(name => {
+      const sanitized = this.identifierMapper.declare(name);
+      return PyAST.Assign(
+        [PyAST.Name(sanitized, 'Store')],
+        PyAST.Name('JSUndefined', 'Load')
+      );
+    });
+  }
+
   transform(jsAst: Node): any {
+    // S4: Pre-pass for break/continue validation
+    const tagger = new AncestryTagger();
+    tagger.tagAST(jsAst);
+
     // Entry point for transformation
     return this.visitNode(jsAst);
   }
@@ -437,7 +575,11 @@ export class Transformer {
     // Reset temp counter to prevent name bleed across functions
     this.resetTemps();
 
-    // Map parameters - collect names while in scope
+    // S4: First pass - collect var declarations for hoisting
+    const hoistedVars = this.collectVarDeclarations(node.body);
+
+    // Map parameters - collect raw names for exclusion from hoisting
+    const rawParamNames: string[] = [];
     const paramNames: string[] = [];
     for (const param of node.params) {
       if (param.type !== 'Identifier') {
@@ -448,12 +590,18 @@ export class Transformer {
           'E_PARAM_DESTRUCTURE'
         );
       }
+      rawParamNames.push(param.name);
       const paramName = this.identifierMapper.declare(param.name);
       paramNames.push(paramName);
     }
 
-    // Transform body
-    const body = this.visitBlockStatement(node.body);
+    // S4: Generate hoisted initializers (exclude params)
+    const hoistedVarNames = new Set(hoistedVars);
+    rawParamNames.forEach(p => hoistedVarNames.delete(p));
+    const hoistedStmts = this.generateHoistedVars(hoistedVarNames);
+
+    // Second pass: Transform body (var declarations are now redundant initializations)
+    const bodyStmts = this.visitBlockStatement(node.body);
 
     // Exit scope
     this.identifierMapper.exitScope();
@@ -461,10 +609,13 @@ export class Transformer {
     // Build args list after collecting names
     const args = paramNames.map(name => PyAST.arg(name, null));
 
+    // Combine hoisted vars + body
+    const finalBody = [...hoistedStmts, ...bodyStmts];
+
     return PyAST.FunctionDef(
       funcName,
       PyAST.arguments(args, [], [], [], []),
-      body,
+      finalBody.length > 0 ? finalBody : [PyAST.Pass()],
       [],
       null
     );
@@ -515,6 +666,40 @@ export class Transformer {
 
   visitExpressionStatement(node: any): any {
     return PyAST.Expr(this.visitNode(node.expression));
+  }
+
+  // S4: Control Flow visitors
+  visitIfStatement(node: any): any {
+    const test = this.jsTruthyCall(this.visitNode(node.test));
+    const body = this.visitStatement(node.consequent);
+    const orelse = node.alternate ? this.visitStatement(node.alternate) : [];
+
+    return PyAST.If(test, body, orelse);
+  }
+
+  visitWhileStatement(node: any): any {
+    const test = this.jsTruthyCall(this.visitNode(node.test));
+    const body = this.visitStatement(node.body);
+
+    return PyAST.While(test, body, []);
+  }
+
+  visitBreakStatement(node: any): any {
+    return PyAST.Break();
+  }
+
+  visitContinueStatement(node: any): any {
+    return PyAST.Continue();
+  }
+
+  private visitStatement(node: any): any[] {
+    if (node.type === 'BlockStatement') {
+      return this.visitBlockStatement(node);
+    } else {
+      // Single statement
+      const stmt = this.visitNode(node);
+      return Array.isArray(stmt) ? stmt : [stmt];
+    }
   }
 
   // ... other visitors added in later specs

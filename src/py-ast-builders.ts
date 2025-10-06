@@ -102,5 +102,22 @@ export const PyAST = {
 
   alias(name: string, asname: string | null) {
     return { nodeType: 'Alias', name, asname };
+  },
+
+  // Control Flow (S4)
+  If(test: any, body: any[], orelse: any[]) {
+    return { nodeType: 'If', test, body, orelse };
+  },
+
+  While(test: any, body: any[], orelse: any[]) {
+    return { nodeType: 'While', test, body, orelse };
+  },
+
+  Break() {
+    return { nodeType: 'Break' };
+  },
+
+  Continue() {
+    return { nodeType: 'Continue' };
   }
 };

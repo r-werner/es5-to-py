@@ -72,6 +72,22 @@ describe('S3: Augmented Assignment', () => {
     const python = transpile('var x = 10; x %= 3;');
     expect(python).toContain('x = js_mod(x, 3)');
   });
+
+  test('Member assignment in statement context', () => {
+    const python = transpile('obj.prop = 1;');
+    // py-ast uses double quotes by default
+    expect(python).toContain('obj["prop"] = 1');
+  });
+
+  test('Array index assignment in statement context', () => {
+    const python = transpile('arr[0] = 5;');
+    expect(python).toContain('arr[0] = 5');
+  });
+
+  test('Computed property assignment in statement context', () => {
+    const python = transpile('obj[key] = value;');
+    expect(python).toContain('obj[key] = value');
+  });
 });
 
 describe('S3: Function Declarations', () => {
