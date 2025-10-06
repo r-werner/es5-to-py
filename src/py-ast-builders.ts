@@ -57,5 +57,50 @@ export const PyAST = {
 
   NamedExpr(target: any, value: any) {
     return { nodeType: 'NamedExpr', target, value };
+  },
+
+  // S3: Statements
+  Assign(targets: any[], value: any) {
+    return { nodeType: 'Assign', targets, value };
+  },
+
+  Return(value: any) {
+    return { nodeType: 'Return', value };
+  },
+
+  Expr(value: any) {
+    return { nodeType: 'Expr', value };
+  },
+
+  Pass() {
+    return { nodeType: 'Pass' };
+  },
+
+  FunctionDef(name: string, args: any, body: any[], decorator_list: any[], returns: any) {
+    return { nodeType: 'FunctionDef', name, args, body, decorator_list, returns };
+  },
+
+  arguments(args: any[], posonlyargs: any[], kwonlyargs: any[], kw_defaults: any[], defaults: any[]) {
+    return { nodeType: 'arguments', args, posonlyargs, kwonlyargs, kw_defaults, defaults };
+  },
+
+  arg(arg: string, annotation: any) {
+    return { nodeType: 'Arg', arg, annotation };
+  },
+
+  Module(body: any[], type_ignores: any[]) {
+    return { nodeType: 'Module', body, type_ignores };
+  },
+
+  Import(names: any[]) {
+    return { nodeType: 'Import', names };
+  },
+
+  ImportFrom(module: string, names: any[], level: number) {
+    return { nodeType: 'ImportFrom', module, names, level };
+  },
+
+  alias(name: string, asname: string | null) {
+    return { nodeType: 'Alias', name, asname };
   }
 };

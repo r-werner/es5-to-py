@@ -17,7 +17,20 @@ function transpile(jsCode: string): { python: string; imports: string } {
   const importManager = new ImportManager();
   const transformer = new Transformer(importManager);
   const pythonAst = transformer.transform(jsAst);
-  const python = unparse(pythonAst);
+
+  // Extract just the expression from the Module body (skip imports)
+  let exprNode = pythonAst;
+  if (pythonAst.nodeType === 'Module' && pythonAst.body.length > 0) {
+    // Find the first non-import statement
+    const nonImport = pythonAst.body.find((stmt: any) =>
+      stmt.nodeType !== 'Import' && stmt.nodeType !== 'ImportFrom'
+    );
+    if (nonImport && nonImport.nodeType === 'Expr') {
+      exprNode = nonImport.value;
+    }
+  }
+
+  const python = unparse(exprNode);
   const imports = importManager.emitHeader();
   return { python, imports };
 }

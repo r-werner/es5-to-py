@@ -196,15 +196,33 @@ export class Transformer {
     }
 
     // Comparison operators
-    const opMap: Record<string, string> = {
+    const comparisonOps: Record<string, string> = {
       '<': 'Lt',
       '<=': 'LtE',
       '>': 'Gt',
       '>=': 'GtE'
     };
 
-    if (opMap[node.operator]) {
-      return PyAST.Compare(left, [opMap[node.operator]], [right]);
+    if (comparisonOps[node.operator]) {
+      return PyAST.Compare(left, [comparisonOps[node.operator]], [right]);
+    }
+
+    // Arithmetic operators (S3)
+    const arithmeticOps: Record<string, string> = {
+      '+': 'js_add',
+      '-': 'js_sub',
+      '*': 'js_mul',
+      '/': 'js_div',
+      '%': 'js_mod'
+    };
+
+    if (arithmeticOps[node.operator]) {
+      this.importManager.addRuntime(arithmeticOps[node.operator]);
+      return PyAST.Call(
+        PyAST.Name(arithmeticOps[node.operator], 'Load'),
+        [left, right],
+        []
+      );
     }
 
     throw new UnsupportedFeatureError(
@@ -283,7 +301,17 @@ export class Transformer {
       return PyAST.UnaryOp('USub', this.visitNode(node.argument));
     }
 
-    // +, typeof, delete, void deferred to other specs
+    if (node.operator === '+') {
+      // Unary plus: ToNumber coercion (S3)
+      this.importManager.addRuntime('js_to_number');
+      return PyAST.Call(
+        PyAST.Name('js_to_number', 'Load'),
+        [this.visitNode(node.argument)],
+        []
+      );
+    }
+
+    // typeof, delete, void deferred to other specs
     throw new UnsupportedFeatureError(
       'unary-op',
       node,
@@ -307,21 +335,223 @@ export class Transformer {
   }
 
   // ==========================================================================
-  // Visitor methods for other specs
+  // S3: Variables, Functions, and Statements
   // ==========================================================================
 
-  visitProgram(node: any): any {
-    // Minimal Program implementation for S2 testing
-    // Full implementation with statements in S3
-    if (node.body.length === 1 && node.body[0].type === 'ExpressionStatement') {
-      // Single expression statement - just return the expression for testing
-      return this.visitNode(node.body[0].expression);
+  visitVariableDeclaration(node: any): any {
+    const assigns: any[] = [];
+
+    for (const decl of node.declarations) {
+      if (decl.id.type !== 'Identifier') {
+        throw new UnsupportedFeatureError(
+          'destructure',
+          decl.id,
+          'Destructuring in variable declarations is not supported',
+          'E_DESTRUCTURE'
+        );
+      }
+
+      const sanitized = this.identifierMapper.declare(decl.id.name);
+      const target = PyAST.Name(sanitized, 'Store');
+
+      let value;
+      if (decl.init) {
+        value = this.visitNode(decl.init);
+      } else {
+        // Uninitialized var → JSUndefined
+        this.importManager.addRuntime('JSUndefined');
+        value = PyAST.Name('JSUndefined', 'Load');
+      }
+
+      assigns.push(PyAST.Assign([target], value));
     }
-    throw new UnsupportedNodeError(node, 'Program with multiple statements not yet implemented (S3)');
+
+    return assigns.length === 1 ? assigns[0] : assigns;
+  }
+
+  visitAssignmentExpression(node: any): any {
+    if (node.operator === '=') {
+      // Simple assignment
+      if (node.left.type === 'Identifier') {
+        const sanitized = this.identifierMapper.lookup(node.left.name);
+        const value = this.visitNode(node.right);
+        return PyAST.Assign([PyAST.Name(sanitized, 'Store')], value);
+      }
+
+      if (node.left.type === 'MemberExpression') {
+        const target = this.visitMemberTarget(node.left);
+        const value = this.visitNode(node.right);
+        return PyAST.Assign([target], value);
+      }
+
+      throw new UnsupportedNodeError(node.left, `Unsupported assignment target: ${node.left.type}`);
+    }
+
+    // Augmented assignment
+    return this.visitAugmentedAssignment(node);
+  }
+
+  visitMemberTarget(node: any): any {
+    const obj = this.visitNode(node.object);
+    let key;
+    if (node.computed) {
+      key = this.visitNode(node.property);
+    } else {
+      key = PyAST.Constant(node.property.name);
+    }
+    return PyAST.Subscript(obj, key, 'Store');
+  }
+
+  visitAugmentedAssignment(node: any): any {
+    const opMap: Record<string, string> = {
+      '+=': 'js_add',
+      '-=': 'js_sub',
+      '*=': 'js_mul',
+      '/=': 'js_div',
+      '%=': 'js_mod'
+    };
+
+    if (!opMap[node.operator]) {
+      throw new UnsupportedFeatureError(
+        'augmented-assign',
+        node,
+        `Augmented assignment operator '${node.operator}' not supported`,
+        'E_AUGMENTED_ASSIGN'
+      );
+    }
+
+    this.importManager.addRuntime(opMap[node.operator]);
+
+    if (node.left.type === 'Identifier') {
+      const sanitized = this.identifierMapper.lookup(node.left.name);
+      const target = PyAST.Name(sanitized, 'Store');
+      const leftLoad = PyAST.Name(sanitized, 'Load');
+      const rightVal = this.visitNode(node.right);
+
+      return PyAST.Assign(
+        [target],
+        PyAST.Call(
+          PyAST.Name(opMap[node.operator], 'Load'),
+          [leftLoad, rightVal],
+          []
+        )
+      );
+    }
+
+    throw new UnsupportedFeatureError(
+      'member-augassign',
+      node,
+      'Augmented assignment to member expressions not yet implemented (requires single-eval)',
+      'E_MEMBER_AUGASSIGN'
+    );
+  }
+
+  visitFunctionDeclaration(node: any): any {
+    const funcName = this.identifierMapper.declare(node.id.name);
+
+    // Enter new scope
+    this.identifierMapper.enterScope();
+
+    // Map parameters - collect names while in scope
+    const paramNames: string[] = [];
+    for (const param of node.params) {
+      if (param.type !== 'Identifier') {
+        throw new UnsupportedFeatureError(
+          'param',
+          param,
+          'Only simple identifier parameters are supported',
+          'E_PARAM_DESTRUCTURE'
+        );
+      }
+      const paramName = this.identifierMapper.declare(param.name);
+      paramNames.push(paramName);
+    }
+
+    // Transform body
+    const body = this.visitBlockStatement(node.body);
+
+    // Exit scope
+    this.identifierMapper.exitScope();
+
+    // Build args list after collecting names
+    const args = paramNames.map(name => PyAST.arg(name, null));
+
+    return PyAST.FunctionDef(
+      funcName,
+      PyAST.arguments(args, [], [], [], []),
+      body,
+      [],
+      null
+    );
+  }
+
+  visitBlockStatement(node: any): any {
+    const statements: any[] = [];
+
+    for (const stmt of node.body) {
+      const result = this.visitNode(stmt);
+      if (Array.isArray(result)) {
+        statements.push(...result);
+      } else {
+        statements.push(result);
+      }
+    }
+
+    return statements.length > 0 ? statements : [PyAST.Pass()];
+  }
+
+  visitReturnStatement(node: any): any {
+    if (node.argument) {
+      return PyAST.Return(this.visitNode(node.argument));
+    } else {
+      // Bare return → return JSUndefined
+      this.importManager.addRuntime('JSUndefined');
+      return PyAST.Return(PyAST.Name('JSUndefined', 'Load'));
+    }
+  }
+
+  visitProgram(node: any): any {
+    const statements: any[] = [];
+
+    for (const stmt of node.body) {
+      const result = this.visitNode(stmt);
+      if (Array.isArray(result)) {
+        statements.push(...result);
+      } else {
+        statements.push(result);
+      }
+    }
+
+    // Generate imports
+    const importLines = this.importManager.generateImports();
+    const importStatements: any[] = [];
+
+    for (const line of importLines) {
+      if (line.startsWith('import ')) {
+        // Parse: import math as _js_math
+        const match = line.match(/import (\w+) as (\w+)/);
+        if (match) {
+          importStatements.push(
+            PyAST.Import([PyAST.alias(match[1], match[2])])
+          );
+        }
+      } else if (line.startsWith('from ')) {
+        // Parse: from runtime.js_compat import x, y, z
+        const match = line.match(/from ([\w.]+) import (.+)/);
+        if (match) {
+          const names = match[2].split(', ').map(n => PyAST.alias(n.trim(), null));
+          importStatements.push(
+            PyAST.ImportFrom(match[1], names, 0)
+          );
+        }
+      }
+    }
+
+    return PyAST.Module([...importStatements, ...statements], []);
   }
 
   visitExpressionStatement(node: any): any {
-    return this.visitNode(node.expression);
+    return PyAST.Expr(this.visitNode(node.expression));
   }
 
   // ... other visitors added in later specs

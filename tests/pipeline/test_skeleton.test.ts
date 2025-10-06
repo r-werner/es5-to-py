@@ -102,13 +102,14 @@ describe('Pipeline Skeleton', () => {
     expect(() => transformer.transform(ast)).not.toThrow();
   });
 
-  test('Transformer throws on multi-statement programs', () => {
+  test('Transformer handles multi-statement programs (S3)', () => {
     const mgr = new ImportManager();
     const transformer = new Transformer(mgr);
     const ast = parseJS('var x = 1; var y = 2;');
 
-    expect(() => transformer.transform(ast)).toThrow(UnsupportedNodeError);
-    expect(() => transformer.transform(ast)).toThrow(/Program with multiple statements not yet implemented/);
+    const pythonAst = transformer.transform(ast);
+    expect(pythonAst.nodeType).toBe('Module');
+    expect(pythonAst.body.length).toBeGreaterThan(1); // At least 2 assignment statements
   });
 
   test('Walrus operator (NamedExpr) can be unparsed by py-ast', async () => {

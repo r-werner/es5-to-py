@@ -148,6 +148,122 @@ def js_strict_neq(a: object, b: object) -> bool:
 
 
 # ============================================================================
+# Arithmetic and Coercion
+# ============================================================================
+
+def js_to_number(x: object) -> float | int:
+    """
+    JavaScript ToNumber coercion.
+
+    Rules:
+    - None (null) → 0
+    - JSUndefined → NaN
+    - bool: True → 1, False → 0
+    - int/float → return as-is
+    - str → parse as number (trim whitespace, empty → 0, parse errors → NaN)
+    - Otherwise → NaN
+
+    Limitations (documented):
+    - Hex literals ('0x1A') not supported
+    - Octal literals not supported
+    """
+    if x is None:
+        return 0
+    if x is JSUndefined:
+        return float('nan')
+    if isinstance(x, bool):
+        return 1 if x else 0
+    if isinstance(x, (int, float)):
+        return x
+    if isinstance(x, str):
+        s = x.strip()
+        if s == '':
+            return 0
+        try:
+            # Try int first, then float
+            if '.' in s or 'e' in s.lower():
+                return float(s)
+            return int(s)
+        except ValueError:
+            return float('nan')
+    return float('nan')
+
+
+def js_add(a: object, b: object) -> object:
+    """
+    JavaScript + operator.
+
+    - If either operand is string → string concatenation
+    - Otherwise → numeric addition with ToNumber coercion
+    """
+    if isinstance(a, str) or isinstance(b, str):
+        # String concatenation (coerce both to strings)
+        a_str = 'undefined' if a is JSUndefined else str(a) if a is not None else 'null'
+        b_str = 'undefined' if b is JSUndefined else str(b) if b is not None else 'null'
+        return a_str + b_str
+    # Numeric addition
+    return js_to_number(a) + js_to_number(b)
+
+
+def js_sub(a: object, b: object) -> float | int:
+    """JavaScript - operator (ToNumber coercion)."""
+    return js_to_number(a) - js_to_number(b)
+
+
+def js_mul(a: object, b: object) -> float | int:
+    """JavaScript * operator (ToNumber coercion)."""
+    return js_to_number(a) * js_to_number(b)
+
+
+def js_div(a: object, b: object) -> float | int:
+    """
+    JavaScript / operator (ToNumber coercion).
+
+    Handles division by zero:
+    - 1/0 → Infinity
+    - -1/0 → -Infinity
+    - 0/0 → NaN
+    """
+    num_a = js_to_number(a)
+    num_b = js_to_number(b)
+
+    if num_b == 0:
+        if num_a > 0:
+            return _js_math.inf
+        elif num_a < 0:
+            return -_js_math.inf
+        else:
+            return float('nan')  # 0/0 → NaN
+
+    return num_a / num_b
+
+
+def js_mod(a: object, b: object) -> float | int:
+    """
+    JavaScript % operator (remainder, not modulo).
+
+    JS remainder keeps dividend sign:
+    - JS: -1 % 2 → -1 (dividend sign)
+    - Python: -1 % 2 → 1 (divisor sign)
+
+    Formula: a - (b * trunc(a / b))
+    """
+    num_a = js_to_number(a)
+    num_b = js_to_number(b)
+
+    if _js_math.isnan(num_a) or _js_math.isnan(num_b) or num_b == 0:
+        return float('nan')
+
+    if _js_math.isinf(num_a):
+        return float('nan')
+
+    if _js_math.isinf(num_b):
+        return num_a
+
+    return num_a - (num_b * _js_math.trunc(num_a / num_b))
+
+
+# ============================================================================
 # Exports
 # ============================================================================
 
@@ -157,4 +273,10 @@ __all__ = [
     'JSException',
     'js_strict_eq',
     'js_strict_neq',
+    'js_to_number',
+    'js_add',
+    'js_sub',
+    'js_mul',
+    'js_div',
+    'js_mod',
 ]

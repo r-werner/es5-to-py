@@ -24,11 +24,8 @@ function main(): void {
     const pythonAst = transformer.transform(jsAst);
     const pythonCode = generatePython(pythonAst);
 
-    // Prepend imports
-    const imports = importManager.emitHeader();
-    const output = imports ? `${imports}\n\n${pythonCode}` : pythonCode;
-
-    console.log(output);
+    // S3+: visitProgram now includes imports in the Module AST
+    console.log(pythonCode);
   } catch (error: any) {
     console.error(`Error: ${error.message}`);
     if (error.code) {

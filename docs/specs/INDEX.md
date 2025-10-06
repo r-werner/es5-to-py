@@ -78,18 +78,23 @@ S0 (Foundations)
 
 ---
 
-### ❌ S3: Assignment + Functions
+### ✅ S3: Assignment + Functions
 **File**: `S3_assignment_functions.md`
 **Dependencies**: S0, S1, S2
+**Status**: Complete (2025-10-06)
 **Deliverables**:
 - `FunctionDeclaration` with parameters
 - `ReturnStatement` (bare `return` → `return JSUndefined`)
 - `VariableDeclaration` and `VariableDeclarator`
 - `AssignmentExpression`: `=`, `+=` (with `js_add()`), numeric-only `-=`/`*=`/`/=`/`%=`
-- Single-evaluation for `MemberExpression` targets in assignments
+- Augmented assignment operators with arithmetic coercion (`js_sub`, `js_mul`, `js_div`, `js_mod`)
+- Arithmetic operators (`+`, `-`, `*`, `/`, `%`) with proper ToNumber coercion
+- Unary `+` operator for numeric coercion
 - Nested functions (call-after-definition only; error on hoisting)
+- Multi-statement program support
 
 **Estimated effort**: 3-4 days
+**Actual effort**: < 1 day
 
 ---
 
@@ -244,7 +249,7 @@ Update this section as specs are completed:
 - [x] S0: Foundations + Runtime Core ✅ (2025-01-05)
 - [x] S1: Pipeline Skeleton ✅ (2025-10-05)
 - [x] S2: Core Expressions I ✅ (2025-10-05)
-- [ ] S3: Assignment + Functions
+- [x] S3: Assignment + Functions ✅ (2025-10-06)
 - [ ] S4: Control Flow I
 - [ ] S5: For + Sequence + Update
 - [ ] S6: Switch + For-in
@@ -252,6 +257,6 @@ Update this section as specs are completed:
 - [ ] S8: Regex + Type Ops + Loose Eq
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: S0, S1, and S2 complete, ready for S3
-**Last Updated**: 2025-10-05
-**Progress**: 3/9 specs complete (33%)
+**Current Status**: S0, S1, S2, and S3 complete, ready for S4
+**Last Updated**: 2025-10-06
+**Progress**: 4/9 specs complete (44%)
