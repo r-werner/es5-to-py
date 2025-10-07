@@ -95,6 +95,7 @@ class AncestryTagger {
 export class Transformer {
   private identifierMapper = new IdentifierMapper();
   private tempCounter = 0;
+  private switchIdCounter = 0; // S6: Switch discriminant ID counter
   private inForInitOrUpdate = false; // S5: Track context for SequenceExpression
   importManager: ImportManager;
 
@@ -104,6 +105,10 @@ export class Transformer {
 
   allocateTemp(): string {
     return `__js_tmp${++this.tempCounter}`;
+  }
+
+  allocateSwitchId(): number {
+    return ++this.switchIdCounter;
   }
 
   resetTemps(): void {
@@ -876,6 +881,200 @@ export class Transformer {
       const stmt = this.visitNode(node);
       return Array.isArray(stmt) ? stmt : [stmt];
     }
+  }
+
+  // S6: Switch Statement
+  private validateSwitch(node: any): void {
+    const cases = node.cases;
+
+    for (let i = 0; i < cases.length; i++) {
+      const currentCase = cases[i];
+      const hasStatements = currentCase.consequent.length > 0;
+
+      if (hasStatements) {
+        const lastStmt = currentCase.consequent[currentCase.consequent.length - 1];
+        const hasTerminator = ['BreakStatement', 'ReturnStatement', 'ThrowStatement'].includes(lastStmt.type);
+
+        if (!hasTerminator && i < cases.length - 1) {
+          // Check next case
+          const nextCase = cases[i + 1];
+          const nextHasStatements = nextCase.consequent.length > 0;
+
+          if (nextHasStatements) {
+            // Fall-through from non-empty to non-empty
+            throw new UnsupportedFeatureError(
+              'switch-fallthrough',
+              currentCase,
+              `Fall-through between non-empty cases is unsupported. Add explicit break statement at line ${currentCase.loc?.start?.line || 'unknown'}.`,
+              'E_SWITCH_FALLTHROUGH'
+            );
+          }
+        }
+      }
+    }
+  }
+
+  private buildSwitchChain(conditions: (any | null)[], bodies: any[][]): any {
+    // Merge empty cases with next non-empty case (alias handling)
+    const merged: Array<{ test: any | null; body: any[] }> = [];
+    const currentConditions: any[] = [];
+
+    for (let i = 0; i < conditions.length; i++) {
+      if (bodies[i].length === 0) {
+        // Empty case: accumulate condition (skip null for default)
+        if (conditions[i] !== null) {
+          currentConditions.push(conditions[i]);
+        }
+      } else {
+        // Non-empty case
+        if (currentConditions.length > 0) {
+          // Merge: if (cond1 or cond2 or ...): body
+          // If this case is default (null), treat accumulated conditions as aliases to default
+          if (conditions[i] !== null) {
+            currentConditions.push(conditions[i]);
+          }
+
+          if (currentConditions.length > 0) {
+            const orExpr = currentConditions.reduce((acc, cond) =>
+              PyAST.BoolOp('Or', [acc, cond])
+            );
+            merged.push({ test: conditions[i] === null ? null : orExpr, body: bodies[i] });
+          } else {
+            // All accumulated were empty cases before default
+            merged.push({ test: null, body: bodies[i] });
+          }
+          currentConditions.length = 0; // Clear array
+        } else {
+          merged.push({ test: conditions[i], body: bodies[i] });
+        }
+      }
+    }
+
+    // Build if/elif/else
+    if (merged.length === 0) {
+      return PyAST.Pass();
+    }
+
+    const first = merged[0];
+    let ifNode: any;
+
+    if (first.test === null) {
+      // Default case first (unusual)
+      ifNode = PyAST.If(PyAST.Constant(true), first.body, []);
+    } else {
+      ifNode = PyAST.If(first.test, first.body, []);
+    }
+
+    let current = ifNode;
+    for (let i = 1; i < merged.length; i++) {
+      const { test, body } = merged[i];
+
+      if (test === null) {
+        // Default case
+        current.orelse = body;
+      } else {
+        // elif
+        const elifNode = PyAST.If(test, body, []);
+        current.orelse = [elifNode];
+        current = elifNode;
+      }
+    }
+
+    return ifNode;
+  }
+
+  visitSwitchStatement(node: any): any[] {
+    // Validate no fall-through
+    this.validateSwitch(node);
+
+    // Cache discriminant in temp variable
+    const switchId = node._switchId || this.allocateSwitchId();
+    const discTemp = `__js_switch_disc_${switchId}`;
+    const discAssign = PyAST.Assign(
+      [PyAST.Name(discTemp, 'Store')],
+      this.visitNode(node.discriminant)
+    );
+
+    // Build if/elif/else chain
+    this.importManager.addRuntime('js_strict_eq');
+
+    const conditions: (any | null)[] = [];
+    const bodies: any[][] = [];
+
+    for (const caseNode of node.cases) {
+      if (caseNode.test === null) {
+        // Default case
+        conditions.push(null);
+      } else {
+        // Regular case: js_strict_eq(disc, caseValue)
+        conditions.push(
+          this.runtimeCall('js_strict_eq', [
+            PyAST.Name(discTemp, 'Load'),
+            this.visitNode(caseNode.test)
+          ])
+        );
+      }
+
+      // Transform case body
+      const body: any[] = [];
+      for (const stmt of caseNode.consequent) {
+        const result = this.visitNode(stmt);
+        if (Array.isArray(result)) {
+          body.push(...result);
+        } else {
+          body.push(result);
+        }
+      }
+
+      // Synthesize break if not present
+      if (body.length > 0) {
+        const lastStmt = body[body.length - 1];
+        const hasTerminator = lastStmt.nodeType === 'Break' || lastStmt.nodeType === 'Return';
+        if (!hasTerminator) {
+          body.push(PyAST.Break());
+        }
+      }
+
+      bodies.push(body);
+    }
+
+    // Build nested if/elif/else
+    const ifChain = this.buildSwitchChain(conditions, bodies);
+
+    // Wrap in while True
+    const whileLoop = PyAST.While(
+      PyAST.Constant(true),
+      [ifChain, PyAST.Break()], // Safety break after if-chain
+      []
+    );
+
+    return [discAssign, whileLoop];
+  }
+
+  // S6: For-in Statement
+  visitForInStatement(node: any): any {
+    this.importManager.addRuntime('js_for_in_keys');
+
+    // Handle left side (var declaration or identifier)
+    let iterVar: string;
+    if (node.left.type === 'VariableDeclaration') {
+      const decl = node.left.declarations[0];
+      iterVar = this.identifierMapper.declare(decl.id.name);
+    } else if (node.left.type === 'Identifier') {
+      iterVar = this.identifierMapper.lookup(node.left.name);
+    } else {
+      throw new UnsupportedNodeError(node.left, `Unsupported for-in left: ${node.left.type}`);
+    }
+
+    const iterable = this.runtimeCall('js_for_in_keys', [this.visitNode(node.right)]);
+    const body = this.visitStatement(node.body);
+
+    return PyAST.For(
+      PyAST.Name(iterVar, 'Store'),
+      iterable,
+      body.length > 0 ? body : [PyAST.Pass()],
+      []
+    );
   }
 
   // ... other visitors added in later specs

@@ -132,17 +132,21 @@ S0 (Foundations)
 
 ---
 
-### ❌ S6: Switch + For-in
+### ✅ S6: Switch + For-in
 **File**: `S6_switch_forin.md`
 **Dependencies**: S0, S1, S3, S4
+**Status**: Complete (2025-10-07)
 **Deliverables**:
 - `SwitchStatement` transformation to `while True` block
 - Switch discriminant caching in temp variable (single-evaluation)
 - Strict equality (`js_strict_eq`) for case matching
 - Static validation for fall-through between non-empty cases
+- Case alias merging (empty cases merged with OR)
+- Synthesized break statements
 - `ForInStatement` with `js_for_in_keys()` runtime helper (keys as strings, skip holes)
 
 **Estimated effort**: 3-4 days
+**Actual effort**: < 1 day
 
 ---
 
@@ -260,11 +264,11 @@ Update this section as specs are completed:
 - [x] S3: Assignment + Functions ✅ (2025-10-06)
 - [x] S4: Control Flow I ✅ (2025-10-06)
 - [x] S5: For + Sequence + Update ✅ (2025-10-06)
-- [ ] S6: Switch + For-in
+- [x] S6: Switch + For-in ✅ (2025-10-07)
 - [ ] S7: Library + Methods
 - [ ] S8: Regex + Type Ops + Loose Eq
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: S0-S5 complete, ready for S6
-**Last Updated**: 2025-10-06
-**Progress**: 6/9 specs complete (67%)
+**Current Status**: S0-S6 complete, ready for S7
+**Last Updated**: 2025-10-07
+**Progress**: 7/9 specs complete (78%)

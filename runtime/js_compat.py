@@ -275,6 +275,43 @@ def js_mod(a: object, b: object) -> Union[float, int]:
 # Exports
 # ============================================================================
 
+# ============================================================================
+# For-in Enumeration
+# ============================================================================
+
+def js_for_in_keys(obj):
+    """
+    JavaScript for-in enumeration.
+
+    CRITICAL: ALL keys are yielded as strings to match JS for-in behavior.
+
+    - Dict: yield keys converted to strings
+    - List: yield indices as strings ('0', '1', ...), skip holes (JSUndefined)
+    - String: yield indices as strings
+    - Otherwise: empty iterator (no enumeration)
+
+    Args:
+        obj: Object to enumerate
+
+    Yields:
+        str: Keys/indices as strings
+    """
+    if isinstance(obj, dict):
+        # Dict: yield keys as strings
+        for key in obj:
+            yield str(key)
+    elif isinstance(obj, list):
+        # List: yield indices as strings, skip holes
+        for i, val in enumerate(obj):
+            if val is not JSUndefined:  # Skip holes
+                yield str(i)
+    elif isinstance(obj, str):
+        # String: yield indices as strings
+        for i in range(len(obj)):
+            yield str(i)
+    # Otherwise: no iteration (empty generator)
+
+
 __all__ = [
     'JSUndefined',
     'js_truthy',
@@ -287,4 +324,5 @@ __all__ = [
     'js_mul',
     'js_div',
     'js_mod',
+    'js_for_in_keys',
 ]

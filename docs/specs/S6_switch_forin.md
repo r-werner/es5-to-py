@@ -1,8 +1,9 @@
 # S6: Switch + For-in
 
-**Status**: ❌ Not Started
+**Status**: ✅ Complete (2025-10-07)
 **Dependencies**: S0, S1, S3, S4
 **Estimated Effort**: 3-4 days
+**Actual Effort**: < 1 day
 
 ---
 
@@ -378,13 +379,13 @@ for (var i in arr) {
 
 ## Done Criteria
 
-- [ ] `js_for_in_keys()` runtime helper implemented
-- [ ] Static validation for switch fall-through
-- [ ] `visitSwitchStatement` with discriminant caching and strict equality
-- [ ] Case alias merging (consecutive empty cases)
-- [ ] Synthesize break at end of case bodies
-- [ ] `visitForInStatement` with keys as strings
-- [ ] All acceptance tests pass
+- [x] `js_for_in_keys()` runtime helper implemented
+- [x] Static validation for switch fall-through
+- [x] `visitSwitchStatement` with discriminant caching and strict equality
+- [x] Case alias merging (consecutive empty cases)
+- [x] Synthesize break at end of case bodies
+- [x] `visitForInStatement` with keys as strings
+- [x] All acceptance tests pass (19 tests: 11 switch + 8 for-in)
 
 ---
 

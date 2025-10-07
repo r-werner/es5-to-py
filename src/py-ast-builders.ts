@@ -119,5 +119,14 @@ export const PyAST = {
 
   Continue() {
     return { nodeType: 'Continue' };
+  },
+
+  // S6: Switch and For-in
+  BoolOp(op: 'And' | 'Or', values: any[]) {
+    return { nodeType: 'BoolOp', op: { nodeType: op }, values };
+  },
+
+  For(target: any, iter: any, body: any[], orelse: any[]) {
+    return { nodeType: 'For', target, iter, body, orelse };
   }
 };
