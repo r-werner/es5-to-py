@@ -55,7 +55,6 @@ es5-to-py --help
 - Arrays `[]` and objects `{}` (identifier and string-literal keys only)
 - Member access: `obj.prop` and `obj['prop']`
 - Property access: `.length` for arrays and strings
-- `new Date()` constructor
 
 **Operators**:
 - Arithmetic: `+`, `-`, `*`, `/`, `%` (with ToNumber coercion)
@@ -81,7 +80,7 @@ es5-to-py --help
 - Array methods: push, pop
 - `console.log()`
 - `Date.now()`
-- Regex: literals `/.../flags` with `String.replace()` support (inline literals only); flags `i`, `m`, `s` supported; `g` flag allowed only in inline `replace()` calls
+- Regex: literals `/.../flags`; test() and String.replace() (limited); exec/match out of scope; flags `i`, `m`, `s` supported
 
 ### ❌ Not Supported
 
