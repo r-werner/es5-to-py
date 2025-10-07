@@ -145,3 +145,43 @@ def test_console_log_mixed(capsys):
     console_log('result:', 42, True, None, JSUndefined)
     captured = capsys.readouterr()
     assert captured.out == 'result: 42 true null undefined\n'
+
+
+def test_console_log_no_args(capsys):
+    # Edge case: console.log() with no arguments
+    console_log()
+    captured = capsys.readouterr()
+    assert captured.out == '\n'
+
+
+def test_substring_float_args():
+    # Edge case: substring with float arguments (ToNumber truncation)
+    assert js_substring('hello', 1.7, 4.2) == 'ell'
+    assert js_substring('hello', 0.9, 3.1) == 'hel'
+
+
+def test_substring_nan_args():
+    # Edge case: substring with NaN arguments (treated as 0)
+    assert js_substring('hello', float('nan'), 3) == 'hel'
+    assert js_substring('hello', 1, float('nan')) == 'h'
+
+
+def test_js_round_half_cases():
+    # Test JS Math.round() semantics (round half away from zero)
+    from js_compat import js_round
+
+    # Positive half cases
+    assert js_round(0.5) == 1
+    assert js_round(1.5) == 2
+    assert js_round(2.5) == 3
+
+    # Negative half cases (JS rounds away from zero, so -0.5 → -0 → 0)
+    assert js_round(-0.5) == 0
+    assert js_round(-1.5) == -1
+    assert js_round(-2.5) == -2
+
+    # Regular rounding
+    assert js_round(3.2) == 3
+    assert js_round(3.7) == 4
+    assert js_round(-3.2) == -3
+    assert js_round(-3.7) == -4

@@ -58,9 +58,11 @@ describe('S7: Math Library', () => {
     expect(python).toContain('_js_math.ceil(3.2)');
   });
 
-  test('Math.round() → _js_math.round()', () => {
-    const { python } = transpile('Math.round(3.5)');
-    expect(python).toContain('_js_math.round(3.5)');
+  test('Math.round() → js_round()', () => {
+    // Uses js_round() for correct JS semantics (round half up)
+    const { python, imports } = transpile('Math.round(3.5)');
+    expect(python).toContain('js_round(3.5)');
+    expect(imports).toContain('from runtime.js_compat import js_round');
   });
 
   test('Math.random() → _js_random.random()', () => {
@@ -168,10 +170,11 @@ describe('S7: Array Methods', () => {
     expect(imports).toContain('from runtime.js_compat import js_array_pop');
   });
 
-  test('arr.push() on variable throws error', () => {
-    expect(() => {
-      transpile('var arr = []; arr.push(1);');
-    }).toThrow(/Cannot determine if receiver is an array/);
+  test('arr.push() on array-initialized variable works', () => {
+    // S7 enhancement: track variables initialized with array literals
+    const { python } = transpile('var arr = []; arr.push(1);');
+    expect(python).toContain('arr = []');
+    expect(python).toContain('arr.append(1)');
   });
 
   test('multi-arg push throws error', () => {

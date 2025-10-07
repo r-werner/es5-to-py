@@ -97,6 +97,7 @@ export class Transformer {
   private tempCounter = 0;
   private switchIdCounter = 0; // S6: Switch discriminant ID counter
   private inForInitOrUpdate = false; // S5: Track context for SequenceExpression
+  private arrayVars = new Set<string>(); // S7: Track variables initialized with array literals
   importManager: ImportManager;
 
   constructor(importManager: ImportManager) {
@@ -354,8 +355,7 @@ export class Transformer {
         node.callee.object.type === 'Identifier' &&
         node.callee.object.name === 'Date' &&
         node.callee.property.name === 'now') {
-      this.importManager.addRuntime('js_date_now');
-      return PyAST.Call(PyAST.Name('js_date_now', 'Load'), [], []);
+      return this.runtimeCall('js_date_now', []);
     }
 
     // console.log()
@@ -363,9 +363,8 @@ export class Transformer {
         node.callee.object.type === 'Identifier' &&
         node.callee.object.name === 'console' &&
         node.callee.property.name === 'log') {
-      this.importManager.addRuntime('console_log');
       const args = node.arguments.map((arg: any) => this.visitNode(arg));
-      return PyAST.Call(PyAST.Name('console_log', 'Load'), args, []);
+      return this.runtimeCall('console_log', args);
     }
 
     // String and Array methods (method calls on objects)
@@ -401,7 +400,7 @@ export class Transformer {
     // Math library methods: sqrt, floor, ceil, log, log10, log2, sin, cos, tan, etc.
     const mathMethods = ['sqrt', 'floor', 'ceil', 'log', 'log10', 'log2',
                          'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
-                         'exp', 'round'];
+                         'exp'];
     if (mathMethods.includes(method)) {
       this.importManager.addStdlib('math');
       return PyAST.Call(
@@ -409,6 +408,12 @@ export class Transformer {
         args,
         []
       );
+    }
+
+    // Math.round() → js_round() (JS uses round-half-away-from-zero, Python uses banker's rounding)
+    if (method === 'round') {
+      this.importManager.addRuntime('js_round');
+      return PyAST.Call(PyAST.Name('js_round', 'Load'), args, []);
     }
 
     // Math.pow(x, y) → x ** y
@@ -465,22 +470,12 @@ export class Transformer {
 
     // charCodeAt(i) → js_char_code_at(str, i)
     if (method === 'charCodeAt') {
-      this.importManager.addRuntime('js_char_code_at');
-      return PyAST.Call(
-        PyAST.Name('js_char_code_at', 'Load'),
-        [obj, args[0]],
-        []
-      );
+      return this.runtimeCall('js_char_code_at', [obj, args[0]]);
     }
 
     // substring(start, end) → js_substring(str, start, end)
     if (method === 'substring') {
-      this.importManager.addRuntime('js_substring');
-      return PyAST.Call(
-        PyAST.Name('js_substring', 'Load'),
-        [obj, ...args],
-        []
-      );
+      return this.runtimeCall('js_substring', [obj, ...args]);
     }
 
     // toLowerCase() → str.lower()
@@ -536,6 +531,7 @@ export class Transformer {
     }
 
     // replace(search, replace) → str.replace(search, replace, 1) (single replacement)
+    // NOTE: S7 handles string-arg replace only. Regex replace is deferred to S8.
     if (method === 'replace') {
       return PyAST.Call(
         PyAST.Attribute(obj, 'replace', 'Load'),
@@ -605,18 +601,16 @@ export class Transformer {
   }
 
   private isProvablyArray(node: any): boolean {
-    // For now, only consider array literals as provably arrays
-    // Could be extended to track variable types in the future
+    // S7: Track array-initialized variables for ergonomics
+    // Array literals are always provably arrays
     if (node.type === 'ArrayExpression') {
       return true;
     }
 
-    // Consider identifiers that were initialized with array literals
-    // This is a simple heuristic - could be improved with dataflow analysis
+    // Variables initialized with array literals (var arr = []) are tracked
     if (node.type === 'Identifier') {
-      // For S7, we'll be conservative and require explicit array literals
-      // at the call site or accept the error
-      return false;
+      const sanitized = this.identifierMapper.lookup(node.name);
+      return this.arrayVars.has(sanitized);
     }
 
     return false;
@@ -766,6 +760,11 @@ export class Transformer {
       let value;
       if (decl.init) {
         value = this.visitNode(decl.init);
+
+        // S7: Track array-initialized variables for provability check
+        if (decl.init.type === 'ArrayExpression') {
+          this.arrayVars.add(sanitized);
+        }
       } else {
         // Uninitialized var → JSUndefined
         this.importManager.addRuntime('JSUndefined');

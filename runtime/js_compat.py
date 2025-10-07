@@ -313,6 +313,33 @@ def js_for_in_keys(obj):
 
 
 # ============================================================================
+# S7: Math Helpers
+# ============================================================================
+
+def js_round(x: Union[int, float]) -> int:
+    """
+    JavaScript Math.round() - rounds to nearest integer.
+
+    CRITICAL: Python's round() uses banker's rounding (round half to even),
+    but JS uses round half towards positive infinity (round half up).
+
+    Examples:
+    - JS: Math.round(0.5) → 1, Math.round(-0.5) → -0 (which is 0)
+    - JS: Math.round(2.5) → 3, Math.round(-2.5) → -2
+    - Python: round(0.5) → 0, round(2.5) → 2 (banker's rounding)
+
+    JS behavior: always round .5 towards +Infinity
+    """
+    num = js_to_number(x)
+
+    if _js_math.isnan(num) or _js_math.isinf(num):
+        return num
+
+    # JS rounds .5 towards +Infinity (upward)
+    return int(_js_math.floor(num + 0.5))
+
+
+# ============================================================================
 # S7: String Helpers
 # ============================================================================
 
@@ -422,6 +449,7 @@ __all__ = [
     'js_div',
     'js_mod',
     'js_for_in_keys',
+    'js_round',
     'js_char_code_at',
     'js_substring',
     'js_array_pop',
