@@ -98,6 +98,7 @@ export class Transformer {
   private switchIdCounter = 0; // S6: Switch discriminant ID counter
   private inForInitOrUpdate = false; // S5: Track context for SequenceExpression
   private arrayVars = new Set<string>(); // S7: Track variables initialized with array literals
+  private currentCallContext: any = null; // S8: Track parent CallExpression for regex 'g' flag validation
   importManager: ImportManager;
 
   constructor(importManager: ImportManager) {
@@ -131,6 +132,23 @@ export class Transformer {
   private isGlobalIdentifier(name: string): boolean {
     const globals = ['undefined', 'Infinity', 'NaN'];
     return globals.includes(name);
+  }
+
+  // S8: Check if regex literal is in String.replace() call context
+  private isInlineReplaceContext(regexNode: any): boolean {
+    if (!this.currentCallContext) return false;
+
+    const call = this.currentCallContext;
+
+    // Check if this is a method call to 'replace'
+    if (call.callee.type !== 'MemberExpression') return false;
+    if (call.callee.property.name !== 'replace') return false;
+
+    // Check if the regex is the first argument
+    if (call.arguments.length < 1) return false;
+    if (call.arguments[0] !== regexNode) return false;
+
+    return true;
   }
 
   // S4: Variable hoisting helpers
@@ -211,9 +229,15 @@ export class Transformer {
       // S8: Regex literal transformation
       const { pattern, flags } = node.regex;
 
-      // Note: 'g' flag validation is complex and requires context checking
-      // For now, we allow 'g' flag and strip it in compile_js_regex
-      // TODO: Add context tracking for inline String.replace() validation
+      // Validate 'g' flag context: only allowed in inline String.replace()
+      if (flags.includes('g') && !this.isInlineReplaceContext(node)) {
+        throw new UnsupportedFeatureError(
+          'regex-global',
+          node,
+          "Regex global flag 'g' is only supported in String.prototype.replace() with inline literals. Use Python's re.findall() or re.finditer() for global matching.",
+          'E_REGEX_GLOBAL_CONTEXT'
+        );
+      }
 
       this.importManager.addRuntime('compile_js_regex');
 
@@ -359,49 +383,58 @@ export class Transformer {
 
   // S7: CallExpression - function calls with library method mappings
   visitCallExpression(node: any): any {
-    // Math.* methods
-    if (node.callee.type === 'MemberExpression' &&
-        node.callee.object.type === 'Identifier' &&
-        node.callee.object.name === 'Math') {
-      return this.visitMathMethod(node);
-    }
+    // S8: Set call context for regex 'g' flag validation
+    const prevContext = this.currentCallContext;
+    this.currentCallContext = node;
 
-    // Date.now()
-    if (node.callee.type === 'MemberExpression' &&
-        node.callee.object.type === 'Identifier' &&
-        node.callee.object.name === 'Date' &&
-        node.callee.property.name === 'now') {
-      return this.runtimeCall('js_date_now', []);
-    }
+    try {
+      // Math.* methods
+      if (node.callee.type === 'MemberExpression' &&
+          node.callee.object.type === 'Identifier' &&
+          node.callee.object.name === 'Math') {
+        return this.visitMathMethod(node);
+      }
 
-    // console.log()
-    if (node.callee.type === 'MemberExpression' &&
-        node.callee.object.type === 'Identifier' &&
-        node.callee.object.name === 'console' &&
-        node.callee.property.name === 'log') {
+      // Date.now()
+      if (node.callee.type === 'MemberExpression' &&
+          node.callee.object.type === 'Identifier' &&
+          node.callee.object.name === 'Date' &&
+          node.callee.property.name === 'now') {
+        return this.runtimeCall('js_date_now', []);
+      }
+
+      // console.log()
+      if (node.callee.type === 'MemberExpression' &&
+          node.callee.object.type === 'Identifier' &&
+          node.callee.object.name === 'console' &&
+          node.callee.property.name === 'log') {
+        const args = node.arguments.map((arg: any) => this.visitNode(arg));
+        return this.runtimeCall('console_log', args);
+      }
+
+      // String and Array methods (method calls on objects)
+      if (node.callee.type === 'MemberExpression') {
+        const methodName = node.callee.property.name;
+
+        // String methods
+        if (this.isStringMethod(methodName)) {
+          return this.visitStringMethod(node);
+        }
+
+        // Array methods (push/pop with provability check)
+        if (methodName === 'push' || methodName === 'pop') {
+          return this.visitArrayMethod(node);
+        }
+      }
+
+      // Default: regular function call
+      const func = this.visitNode(node.callee);
       const args = node.arguments.map((arg: any) => this.visitNode(arg));
-      return this.runtimeCall('console_log', args);
+      return PyAST.Call(func, args, []);
+    } finally {
+      // Restore previous context
+      this.currentCallContext = prevContext;
     }
-
-    // String and Array methods (method calls on objects)
-    if (node.callee.type === 'MemberExpression') {
-      const methodName = node.callee.property.name;
-
-      // String methods
-      if (this.isStringMethod(methodName)) {
-        return this.visitStringMethod(node);
-      }
-
-      // Array methods (push/pop with provability check)
-      if (methodName === 'push' || methodName === 'pop') {
-        return this.visitArrayMethod(node);
-      }
-    }
-
-    // Default: regular function call
-    const func = this.visitNode(node.callee);
-    const args = node.arguments.map((arg: any) => this.visitNode(arg));
-    return PyAST.Call(func, args, []);
   }
 
   private visitMathMethod(node: any): any {

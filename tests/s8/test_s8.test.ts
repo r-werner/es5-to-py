@@ -56,13 +56,28 @@ describe('S8: Regex Literals', () => {
     expect(python).toContain('compile_js_regex("^start", "m")');
   });
 
-  test('Regex with global flag (stripped by runtime)', () => {
-    const { python } = transpile('/test/g');
-    expect(python).toContain('compile_js_regex("test", "g")');
+  test('Regex with global flag in replace() is allowed', () => {
+    const { python } = transpile('"aaa".replace(/a/g, "b")');
+    expect(python).toContain('compile_js_regex("a", "g")');
   });
 
-  test('Regex with multiple flags', () => {
-    const { python } = transpile('/pattern/gi');
+  test('Regex with global flag outside replace() throws error', () => {
+    expect(() => transpile('var r = /test/g')).toThrow(/Regex global flag 'g'/);
+    expect(() => transpile('var r = /test/g')).toThrow(/re\.findall.*re\.finditer/);
+  });
+
+  test('Regex with global flag in variable then used in replace() throws error', () => {
+    // This should error because the /a/g is NOT an inline literal in replace()
+    expect(() => transpile('var r = /a/g; "aaa".replace(r, "b")')).toThrow(/Regex global flag 'g'/);
+  });
+
+  test('Regex with multiple flags (without g)', () => {
+    const { python } = transpile('/pattern/im');
+    expect(python).toContain('compile_js_regex("pattern", "im")');
+  });
+
+  test('Regex with multiple flags including g in replace()', () => {
+    const { python } = transpile('"test".replace(/pattern/gi, "x")');
     expect(python).toContain('compile_js_regex("pattern", "gi")');
   });
 
