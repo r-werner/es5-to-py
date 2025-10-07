@@ -81,7 +81,7 @@ es5-to-py --help
 - Array methods: push, pop
 - `console.log()`
 - `Date.now()`
-- Regex: literals `/.../flags` with `.test()` and limited `String.replace()` support; flags `i`, `m`, `s` supported
+- Regex: literals `/.../flags` with `String.replace()` support (inline literals only); flags `i`, `m`, `s` supported; `g` flag allowed only in inline `replace()` calls
 
 ### ❌ Not Supported
 
@@ -93,6 +93,8 @@ The following features are **intentionally not supported** and will produce clea
 - `try`/`catch`/`finally`
 - Operators: `new` (except `Date`), `in`, `instanceof`
 - Bitwise operators
+- Regex methods: `.test()`, `.exec()`, `.match()` (use `String.replace()` with inline regex literals instead)
+- Regex 'g' flag in variable assignments (only allowed inline in `String.replace()` calls)
 - Most array/object methods (map, filter, reduce, forEach, etc.)
 - Computed object keys
 - Destructuring
@@ -196,6 +198,24 @@ x = 10
 x = js_add(x, 5)
 x = js_mul(x, 2)
 ```
+
+### Regex with String.replace()
+
+**JavaScript**:
+```javascript
+var text = "aaa bbb aaa";
+var result = text.replace(/a/g, "x");  // Global flag allowed inline
+```
+
+**Python** (generated):
+```python
+from runtime.js_compat import compile_js_regex
+
+text = "aaa bbb aaa"
+result = text.replace(compile_js_regex("a", "g"), "x", 1)
+```
+
+**Note**: Regex literals with the `g` flag are only allowed as inline arguments to `String.replace()`. Assigning them to variables will produce an error.
 
 ## 🧪 Testing
 
