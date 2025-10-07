@@ -312,6 +312,103 @@ def js_for_in_keys(obj):
     # Otherwise: no iteration (empty generator)
 
 
+# ============================================================================
+# S7: String Helpers
+# ============================================================================
+
+def js_char_code_at(s: str, i: Union[int, float]) -> float:
+    """
+    JavaScript String.charCodeAt().
+    Returns the UTF-16 code unit at the given index.
+    Returns NaN for out-of-range indices.
+    """
+    i_num = js_to_number(i)
+    if _js_math.isnan(i_num):
+        return float('nan')
+    i_int = int(i_num)
+    if 0 <= i_int < len(s):
+        return float(ord(s[i_int]))
+    return float('nan')
+
+
+def js_substring(s: str, start: Union[int, float], end: Union[int, float, None] = None) -> str:
+    """
+    JavaScript String.substring().
+    - Clamps negative values to 0
+    - Swaps start/end if start > end
+    - If end is None/undefined, uses string length
+    """
+    start_num = js_to_number(start)
+    if _js_math.isnan(start_num):
+        start_num = 0
+
+    if end is None or end is JSUndefined:
+        end_num = len(s)
+    else:
+        end_num = js_to_number(end)
+        if _js_math.isnan(end_num):
+            end_num = 0
+
+    # Clamp to [0, len(s)]
+    start_int = max(0, min(int(start_num), len(s)))
+    end_int = max(0, min(int(end_num), len(s)))
+
+    # Swap if start > end
+    if start_int > end_int:
+        start_int, end_int = end_int, start_int
+
+    return s[start_int:end_int]
+
+
+# ============================================================================
+# S7: Array Helpers
+# ============================================================================
+
+def js_array_pop(arr: list) -> object:
+    """
+    JavaScript Array.pop().
+    Returns JSUndefined for empty arrays (not None).
+    """
+    if len(arr) > 0:
+        return arr.pop()
+    return JSUndefined
+
+
+# ============================================================================
+# S7: Date Helpers
+# ============================================================================
+
+def js_date_now() -> int:
+    """
+    JavaScript Date.now().
+    Returns milliseconds since Unix epoch (1970-01-01T00:00:00Z).
+    """
+    import time as _js_time
+    return int(_js_time.time() * 1000)
+
+
+# ============================================================================
+# S7: Console Helpers
+# ============================================================================
+
+def console_log(*args) -> None:
+    """
+    JavaScript console.log().
+    Prints arguments separated by spaces (JS-style).
+    """
+    # Convert each arg to string using JS ToString semantics
+    def to_js_string(x: object) -> str:
+        if x is JSUndefined:
+            return 'undefined'
+        if x is None:
+            return 'null'
+        if isinstance(x, bool):
+            return 'true' if x else 'false'
+        return str(x)
+
+    print(' '.join(to_js_string(arg) for arg in args))
+
+
 __all__ = [
     'JSUndefined',
     'js_truthy',
@@ -325,4 +422,9 @@ __all__ = [
     'js_div',
     'js_mod',
     'js_for_in_keys',
+    'js_char_code_at',
+    'js_substring',
+    'js_array_pop',
+    'js_date_now',
+    'console_log',
 ]

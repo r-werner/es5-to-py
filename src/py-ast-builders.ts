@@ -34,6 +34,10 @@ export const PyAST = {
     return { nodeType: 'Subscript', value, slice, ctx: { nodeType: ctx } };
   },
 
+  Slice(lower: any, upper: any, step: any) {
+    return { nodeType: 'Slice', lower, upper, step };
+  },
+
   Compare(left: any, ops: string[], comparators: any[]) {
     return {
       nodeType: 'Compare',

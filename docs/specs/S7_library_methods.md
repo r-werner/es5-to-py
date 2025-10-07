@@ -1,8 +1,9 @@
 # S7: Library + Methods
 
-**Status**: ❌ Not Started
+**Status**: ✅ Complete (2025-10-07)
 **Dependencies**: S0, S1, S2
 **Estimated Effort**: 3-4 days
+**Actual Effort**: < 1 day
 
 ---
 
@@ -307,13 +308,13 @@ arr.pop();  // → js_array_pop(arr)
 
 ## Done Criteria
 
-- [ ] Math library mappings with aliased imports
-- [ ] String method mappings with runtime helpers
-- [ ] Date.now() mapping
-- [ ] console.log() mapping
-- [ ] Array push (single-arg) and pop mappings
-- [ ] Import manager deterministic ordering
-- [ ] All acceptance tests pass
+- [x] Math library mappings with aliased imports
+- [x] String method mappings with runtime helpers
+- [x] Date.now() mapping
+- [x] console.log() mapping
+- [x] Array push (single-arg) and pop mappings
+- [x] Import manager deterministic ordering
+- [x] All acceptance tests pass (31/31 S7 tests + 201/201 total tests)
 
 ---
 

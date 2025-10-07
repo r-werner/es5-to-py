@@ -52,9 +52,10 @@ describe('S3: Negative Cases - Functions', () => {
 });
 
 describe('S3: Negative Cases - Deferred to Later Specs', () => {
-  test('CallExpression deferred to S7', () => {
+  test('CallExpression now supported in S7', () => {
+    // CallExpression is now implemented in S7
     const transform = transpile('var x = add(1, 2);');
-    expect(transform).toThrow(/CallExpression/);
+    expect(transform).not.toThrow();
   });
 
   test('UpdateExpression now supported in S5', () => {

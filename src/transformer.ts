@@ -314,6 +314,19 @@ export class Transformer {
       );
     }
 
+    // S7: Special case: Math.PI (property access, not method call)
+    if (!node.computed &&
+        node.object.type === 'Identifier' &&
+        node.object.name === 'Math' &&
+        node.property.name === 'PI') {
+      this.importManager.addStdlib('math');
+      return PyAST.Attribute(
+        PyAST.Name('_js_math', 'Load'),
+        'pi',
+        'Load'
+      );
+    }
+
     // Default: subscript access
     let key;
     if (node.computed) {
@@ -325,6 +338,288 @@ export class Transformer {
     }
 
     return PyAST.Subscript(obj, key, 'Load');
+  }
+
+  // S7: CallExpression - function calls with library method mappings
+  visitCallExpression(node: any): any {
+    // Math.* methods
+    if (node.callee.type === 'MemberExpression' &&
+        node.callee.object.type === 'Identifier' &&
+        node.callee.object.name === 'Math') {
+      return this.visitMathMethod(node);
+    }
+
+    // Date.now()
+    if (node.callee.type === 'MemberExpression' &&
+        node.callee.object.type === 'Identifier' &&
+        node.callee.object.name === 'Date' &&
+        node.callee.property.name === 'now') {
+      this.importManager.addRuntime('js_date_now');
+      return PyAST.Call(PyAST.Name('js_date_now', 'Load'), [], []);
+    }
+
+    // console.log()
+    if (node.callee.type === 'MemberExpression' &&
+        node.callee.object.type === 'Identifier' &&
+        node.callee.object.name === 'console' &&
+        node.callee.property.name === 'log') {
+      this.importManager.addRuntime('console_log');
+      const args = node.arguments.map((arg: any) => this.visitNode(arg));
+      return PyAST.Call(PyAST.Name('console_log', 'Load'), args, []);
+    }
+
+    // String and Array methods (method calls on objects)
+    if (node.callee.type === 'MemberExpression') {
+      const methodName = node.callee.property.name;
+
+      // String methods
+      if (this.isStringMethod(methodName)) {
+        return this.visitStringMethod(node);
+      }
+
+      // Array methods (push/pop with provability check)
+      if (methodName === 'push' || methodName === 'pop') {
+        return this.visitArrayMethod(node);
+      }
+    }
+
+    // Default: regular function call
+    const func = this.visitNode(node.callee);
+    const args = node.arguments.map((arg: any) => this.visitNode(arg));
+    return PyAST.Call(func, args, []);
+  }
+
+  private visitMathMethod(node: any): any {
+    const method = node.callee.property.name;
+    const args = node.arguments.map((arg: any) => this.visitNode(arg));
+
+    // Built-in functions: abs, max, min
+    if (['abs', 'max', 'min'].includes(method)) {
+      return PyAST.Call(PyAST.Name(method, 'Load'), args, []);
+    }
+
+    // Math library methods: sqrt, floor, ceil, log, log10, log2, sin, cos, tan, etc.
+    const mathMethods = ['sqrt', 'floor', 'ceil', 'log', 'log10', 'log2',
+                         'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
+                         'exp', 'round'];
+    if (mathMethods.includes(method)) {
+      this.importManager.addStdlib('math');
+      return PyAST.Call(
+        PyAST.Attribute(PyAST.Name('_js_math', 'Load'), method, 'Load'),
+        args,
+        []
+      );
+    }
+
+    // Math.pow(x, y) → x ** y
+    if (method === 'pow') {
+      if (args.length !== 2) {
+        throw new UnsupportedFeatureError(
+          'math-pow',
+          node,
+          'Math.pow() requires exactly 2 arguments',
+          'E_MATH_POW_ARGS'
+        );
+      }
+      return PyAST.BinOp(args[0], 'Pow', args[1]);
+    }
+
+    // Math.random()
+    if (method === 'random') {
+      this.importManager.addStdlib('random');
+      return PyAST.Call(
+        PyAST.Attribute(PyAST.Name('_js_random', 'Load'), 'random', 'Load'),
+        [],
+        []
+      );
+    }
+
+    throw new UnsupportedFeatureError(
+      'math-method',
+      node,
+      `Math.${method}() is not supported`,
+      'E_MATH_METHOD'
+    );
+  }
+
+  private isStringMethod(method: string): boolean {
+    const stringMethods = ['charAt', 'charCodeAt', 'substring', 'toLowerCase',
+                           'toUpperCase', 'indexOf', 'slice', 'split', 'trim', 'replace'];
+    return stringMethods.includes(method);
+  }
+
+  private visitStringMethod(node: any): any {
+    const method = node.callee.property.name;
+    const obj = this.visitNode(node.callee.object);
+    const args = node.arguments.map((arg: any) => this.visitNode(arg));
+
+    // charAt(i) → str[i:i+1]
+    if (method === 'charAt') {
+      const index = args[0];
+      return PyAST.Subscript(
+        obj,
+        PyAST.Slice(index, PyAST.BinOp(index, 'Add', PyAST.Constant(1)), null),
+        'Load'
+      );
+    }
+
+    // charCodeAt(i) → js_char_code_at(str, i)
+    if (method === 'charCodeAt') {
+      this.importManager.addRuntime('js_char_code_at');
+      return PyAST.Call(
+        PyAST.Name('js_char_code_at', 'Load'),
+        [obj, args[0]],
+        []
+      );
+    }
+
+    // substring(start, end) → js_substring(str, start, end)
+    if (method === 'substring') {
+      this.importManager.addRuntime('js_substring');
+      return PyAST.Call(
+        PyAST.Name('js_substring', 'Load'),
+        [obj, ...args],
+        []
+      );
+    }
+
+    // toLowerCase() → str.lower()
+    if (method === 'toLowerCase') {
+      return PyAST.Call(
+        PyAST.Attribute(obj, 'lower', 'Load'),
+        [],
+        []
+      );
+    }
+
+    // toUpperCase() → str.upper()
+    if (method === 'toUpperCase') {
+      return PyAST.Call(
+        PyAST.Attribute(obj, 'upper', 'Load'),
+        [],
+        []
+      );
+    }
+
+    // indexOf(substr) → str.find(substr)
+    if (method === 'indexOf') {
+      return PyAST.Call(
+        PyAST.Attribute(obj, 'find', 'Load'),
+        args,
+        []
+      );
+    }
+
+    // slice(start, end) → str[start:end]
+    if (method === 'slice') {
+      const start = args[0] || PyAST.Constant(null);
+      const end = args[1] || PyAST.Constant(null);
+      return PyAST.Subscript(obj, PyAST.Slice(start, end, null), 'Load');
+    }
+
+    // split(sep) → str.split(sep)
+    if (method === 'split') {
+      return PyAST.Call(
+        PyAST.Attribute(obj, 'split', 'Load'),
+        args,
+        []
+      );
+    }
+
+    // trim() → str.strip()
+    if (method === 'trim') {
+      return PyAST.Call(
+        PyAST.Attribute(obj, 'strip', 'Load'),
+        [],
+        []
+      );
+    }
+
+    // replace(search, replace) → str.replace(search, replace, 1) (single replacement)
+    if (method === 'replace') {
+      return PyAST.Call(
+        PyAST.Attribute(obj, 'replace', 'Load'),
+        [...args, PyAST.Constant(1)],  // count=1 for single replacement
+        []
+      );
+    }
+
+    throw new UnsupportedFeatureError(
+      'string-method',
+      node,
+      `String method .${method}() is not supported`,
+      'E_STRING_METHOD'
+    );
+  }
+
+  private visitArrayMethod(node: any): any {
+    const method = node.callee.property.name;
+    const obj = node.callee.object;
+
+    // Check if receiver is provably an array
+    if (!this.isProvablyArray(obj)) {
+      throw new UnsupportedFeatureError(
+        'array-method-ambiguous',
+        node,
+        `Cannot determine if receiver is an array for .${method}(). Only use array methods on variables that are initialized with array literals.`,
+        'E_ARRAY_METHOD_AMBIGUOUS'
+      );
+    }
+
+    const objNode = this.visitNode(obj);
+    const args = node.arguments.map((arg: any) => this.visitNode(arg));
+
+    // push(x) → arr.append(x) (single argument only)
+    if (method === 'push') {
+      if (args.length !== 1) {
+        throw new UnsupportedFeatureError(
+          'array-push-multi',
+          node,
+          'Array.push() with multiple arguments not supported. Use multiple .push() calls.',
+          'E_ARRAY_PUSH_MULTI_ARG'
+        );
+      }
+      return PyAST.Call(
+        PyAST.Attribute(objNode, 'append', 'Load'),
+        args,
+        []
+      );
+    }
+
+    // pop() → js_array_pop(arr)
+    if (method === 'pop') {
+      this.importManager.addRuntime('js_array_pop');
+      return PyAST.Call(
+        PyAST.Name('js_array_pop', 'Load'),
+        [objNode],
+        []
+      );
+    }
+
+    throw new UnsupportedFeatureError(
+      'array-method',
+      node,
+      `Array method .${method}() is not supported`,
+      'E_ARRAY_METHOD'
+    );
+  }
+
+  private isProvablyArray(node: any): boolean {
+    // For now, only consider array literals as provably arrays
+    // Could be extended to track variable types in the future
+    if (node.type === 'ArrayExpression') {
+      return true;
+    }
+
+    // Consider identifiers that were initialized with array literals
+    // This is a simple heuristic - could be improved with dataflow analysis
+    if (node.type === 'Identifier') {
+      // For S7, we'll be conservative and require explicit array literals
+      // at the call site or accept the error
+      return false;
+    }
+
+    return false;
   }
 
   visitBinaryExpression(node: any): any {

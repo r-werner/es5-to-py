@@ -150,18 +150,20 @@ S0 (Foundations)
 
 ---
 
-### ❌ S7: Library + Methods
+### ✅ S7: Library + Methods
 **File**: `S7_library_methods.md`
 **Dependencies**: S0, S1, S2
+**Status**: Complete (2025-10-07)
 **Deliverables**:
-- Math library mappings (aliased `_js_math`): `Math.sqrt()`, `Math.pow()` → `**`, `Math.abs()`, etc.
-- `Date.now()` → `JSDate.now()` (UTC timezone)
+- Math library mappings (aliased `_js_math`): `Math.sqrt()`, `Math.pow()` → `**`, `Math.abs()`, `Math.PI`, etc.
+- `Date.now()` → `js_date_now()` runtime helper
 - `console.log()` → `console_log()` runtime helper
-- String methods: `charAt()`, `charCodeAt()`, `substring()`, `toUpperCase()`, etc.
-- Array methods ambiguity policy (document supported subset)
-- Import manager finalization (deterministic order, no unused imports)
+- String methods: `charAt()`, `charCodeAt()`, `substring()`, `toLowerCase()`, `toUpperCase()`, `indexOf()`, `slice()`, `split()`, `trim()`, `replace()`
+- Array methods: `push()` (single-arg), `pop()` with provability check
+- CallExpression visitor with method routing
 
 **Estimated effort**: 3-4 days
+**Actual effort**: < 1 day
 
 ---
 
@@ -265,10 +267,10 @@ Update this section as specs are completed:
 - [x] S4: Control Flow I ✅ (2025-10-06)
 - [x] S5: For + Sequence + Update ✅ (2025-10-06)
 - [x] S6: Switch + For-in ✅ (2025-10-07)
-- [ ] S7: Library + Methods
+- [x] S7: Library + Methods ✅ (2025-10-07)
 - [ ] S8: Regex + Type Ops + Loose Eq
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: S0-S6 complete, ready for S7
+**Current Status**: S0-S7 complete, ready for S8
 **Last Updated**: 2025-10-07
-**Progress**: 7/9 specs complete (78%)
+**Progress**: 8/9 specs complete (89%)
