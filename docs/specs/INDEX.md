@@ -116,16 +116,19 @@ S0 (Foundations)
 
 ---
 
-### ❌ S5: For + Sequence + Update
+### ✅ S5: For + Sequence + Update
 **File**: `S5_for_sequence_update.md`
 **Dependencies**: S0, S1, S3, S4
+**Status**: Complete (2025-10-06)
 **Deliverables**:
 - C-style `for(init; test; update)` desugaring to `while` with continue-update injection
-- Loop ID tagging to prevent incorrect update injection in nested loops
-- `SequenceExpression` support in for-init/update contexts only
-- `UpdateExpression` (`++`, `--`) in for-update clause (expression contexts optional)
+- Loop ID tagging and ancestry tracking (via existing AncestryTagger from S4)
+- `SequenceExpression` support in for-init/update contexts only (errors elsewhere)
+- `UpdateExpression` (`++`, `--`) for identifier targets in statement context
+- Continue-update injection (over-conservative but safe implementation)
 
 **Estimated effort**: 3-4 days
+**Actual effort**: < 1 day
 
 ---
 
@@ -256,12 +259,12 @@ Update this section as specs are completed:
 - [x] S2: Core Expressions I ✅ (2025-10-05)
 - [x] S3: Assignment + Functions ✅ (2025-10-06)
 - [x] S4: Control Flow I ✅ (2025-10-06)
-- [ ] S5: For + Sequence + Update
+- [x] S5: For + Sequence + Update ✅ (2025-10-06)
 - [ ] S6: Switch + For-in
 - [ ] S7: Library + Methods
 - [ ] S8: Regex + Type Ops + Loose Eq
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: S0-S4 complete, ready for S5
+**Current Status**: S0-S5 complete, ready for S6
 **Last Updated**: 2025-10-06
-**Progress**: 5/9 specs complete (56%)
+**Progress**: 6/9 specs complete (67%)

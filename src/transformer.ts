@@ -95,6 +95,7 @@ class AncestryTagger {
 export class Transformer {
   private identifierMapper = new IdentifierMapper();
   private tempCounter = 0;
+  private inForInitOrUpdate = false; // S5: Track context for SequenceExpression
   importManager: ImportManager;
 
   constructor(importManager: ImportManager) {
@@ -689,7 +690,182 @@ export class Transformer {
   }
 
   visitContinueStatement(node: any): any {
-    return PyAST.Continue();
+    const continueStmt = PyAST.Continue() as any;
+    // Preserve source node for loop ID checking in continue-update injection
+    continueStmt._sourceNode = node;
+    return continueStmt;
+  }
+
+  // S5: For loops with continue-update injection
+  visitForStatement(node: any): any {
+    const statements: any[] = [];
+    const loopId = node._loopId; // Set by AncestryTagger
+
+    // Emit init using the same helper as update
+    if (node.init) {
+      const initStmts = this.emitForClauseStatements(node.init);
+      statements.push(...initStmts);
+    }
+
+    // Build test condition
+    let test;
+    if (node.test) {
+      test = this.jsTruthyCall(this.visitNode(node.test));
+    } else {
+      test = PyAST.Constant(true);
+    }
+
+    // Transform body with continue-update injection
+    let body = this.visitStatement(node.body);
+
+    // Inject update before continues that belong to this loop
+    if (node.update) {
+      body = this.injectUpdateBeforeContinue(body, node.update, loopId);
+    }
+
+    // Append update at end of body (for normal flow)
+    if (node.update) {
+      body.push(...this.emitUpdateStatements(node.update));
+    }
+
+    statements.push(PyAST.While(test, body.length > 0 ? body : [PyAST.Pass()], []));
+    return statements;
+  }
+
+  private injectUpdateBeforeContinue(statements: any[], updateNode: any, loopId: number): any[] {
+    const result: any[] = [];
+
+    for (const stmt of statements) {
+      if (stmt.nodeType === 'Continue') {
+        // Only inject update if this continue belongs to the current loop
+        // _sourceNode is the original AST node (set in visitContinueStatement)
+        // _currentLoopId is annotated by AncestryTagger during pre-pass
+        // This ensures updates are only injected for continues in THIS for-loop, not nested loops
+        if (stmt._sourceNode && stmt._sourceNode._currentLoopId === loopId) {
+          // This continue belongs to this for-loop, inject update
+          result.push(...this.emitUpdateStatements(updateNode));
+        }
+        result.push(stmt);
+      } else if (stmt.body && Array.isArray(stmt.body)) {
+        // Recurse into blocks (if, while, etc.)
+        stmt.body = this.injectUpdateBeforeContinue(stmt.body, updateNode, loopId);
+        result.push(stmt);
+      } else if (stmt.orelse && Array.isArray(stmt.orelse)) {
+        // Recurse into else blocks
+        stmt.orelse = this.injectUpdateBeforeContinue(stmt.orelse, updateNode, loopId);
+        result.push(stmt);
+      } else {
+        result.push(stmt);
+      }
+    }
+
+    return result;
+  }
+
+  // DRY helper: Wrap a visited node into a statement if needed
+  // Assign/AugAssign nodes are already statements; other expressions need Expr() wrapper
+  private wrapAsStatement(node: any): any {
+    if (node.nodeType === 'Assign' || node.nodeType === 'AugAssign') {
+      return node;
+    }
+    return PyAST.Expr(node);
+  }
+
+  // DRY helper: Emit statement(s) from for-init or for-update clause
+  // Used by both init and update sections to unify handling
+  // Note: Callers iterate to emit statements; this returns array, not single expression
+  private emitForClauseStatements(clauseNode: any): any[] {
+    return this.withForContext(() => {
+      const statements: any[] = [];
+
+      if (clauseNode.type === 'SequenceExpression') {
+        // Multiple expressions in sequence
+        for (const expr of clauseNode.expressions) {
+          const result = this.visitNode(expr);
+          if (Array.isArray(result)) {
+            // VariableDeclaration can return multiple Assign statements
+            statements.push(...result);
+          } else {
+            statements.push(this.wrapAsStatement(result));
+          }
+        }
+      } else {
+        // Single expression or statement
+        const result = this.visitNode(clauseNode);
+        if (Array.isArray(result)) {
+          // VariableDeclaration can return multiple Assign statements
+          statements.push(...result);
+        } else {
+          statements.push(this.wrapAsStatement(result));
+        }
+      }
+
+      return statements;
+    });
+  }
+
+  // Convenience alias for update statements (semantic clarity)
+  private emitUpdateStatements(updateNode: any): any[] {
+    return this.emitForClauseStatements(updateNode);
+  }
+
+  // DRY helper: Execute callback in for-init/update context
+  private withForContext<T>(callback: () => T): T {
+    const prev = this.inForInitOrUpdate;
+    this.inForInitOrUpdate = true;
+    try {
+      return callback();
+    } finally {
+      this.inForInitOrUpdate = prev;
+    }
+  }
+
+  // S5: SequenceExpression (comma operator)
+  visitSequenceExpression(node: any): any {
+    // Only allowed in for-init/update contexts
+    if (!this.inForInitOrUpdate) {
+      throw new UnsupportedFeatureError(
+        'sequence-expr',
+        node,
+        'SequenceExpression (comma operator) is only supported in for-loop init/update clauses. Refactor to separate statements.',
+        'E_SEQUENCE_EXPR_CONTEXT'
+      );
+    }
+
+    // In for context, return the last expression (JavaScript semantics)
+    // But caller will handle multiple expressions
+    const expressions = node.expressions.map((expr: any) => this.visitNode(expr));
+    return expressions[expressions.length - 1]; // Return last for expression context
+  }
+
+  // S5: UpdateExpression (++/--)
+  visitUpdateExpression(node: any): any {
+    const arg = node.argument;
+
+    if (arg.type === 'Identifier') {
+      const sanitized = this.identifierMapper.lookup(arg.name);
+      const target = PyAST.Name(sanitized, 'Store');
+      const value = PyAST.Name(sanitized, 'Load');
+
+      if (node.operator === '++') {
+        return PyAST.Assign([target], this.runtimeCall('js_add', [value, PyAST.Constant(1)]));
+      }
+
+      if (node.operator === '--') {
+        return PyAST.Assign([target], this.runtimeCall('js_sub', [value, PyAST.Constant(1)]));
+      }
+    }
+
+    if (arg.type === 'MemberExpression') {
+      throw new UnsupportedFeatureError(
+        'update-expr-member',
+        node,
+        'UpdateExpression on member expression not yet implemented (requires single-evaluation)',
+        'E_UPDATE_EXPR_MEMBER'
+      );
+    }
+
+    throw new UnsupportedNodeError(node, `UpdateExpression target not supported: ${arg.type}`);
   }
 
   private visitStatement(node: any): any[] {

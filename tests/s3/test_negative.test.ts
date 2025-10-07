@@ -57,13 +57,16 @@ describe('S3: Negative Cases - Deferred to Later Specs', () => {
     expect(transform).toThrow(/CallExpression/);
   });
 
-  test('UpdateExpression deferred to S5', () => {
+  test('UpdateExpression now supported in S5', () => {
+    // UpdateExpression is now implemented in S5
     const transform = transpile('var x = 5; x++;');
-    expect(transform).toThrow(/UpdateExpression/);
+    expect(transform).not.toThrow();
   });
 
-  test('SequenceExpression deferred to S5', () => {
+  test('SequenceExpression now supported in S5 (for-loops only)', () => {
+    // SequenceExpression outside for-loops still errors
     const transform = transpile('var x = (1, 2, 3);');
     expect(transform).toThrow(/SequenceExpression/);
+    expect(transform).toThrow(/only supported in for-loop/);
   });
 });
