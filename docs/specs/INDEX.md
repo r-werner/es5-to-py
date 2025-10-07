@@ -273,8 +273,8 @@ Update this section as specs are completed:
 - [x] S6: Switch + For-in ✅ (2025-10-07)
 - [x] S7: Library + Methods ✅ (2025-10-07)
 - [x] S8: Regex + Type Ops + Loose Eq ✅ (2025-10-07)
-- [ ] S9: CLI/Test Harness/Docs
+- [x] S9: CLI/Test Harness/Docs ✅ (2025-10-07)
 
-**Current Status**: S0-S8 complete, ready for S9
+**Current Status**: All specs complete! 🎉
 **Last Updated**: 2025-10-07
-**Progress**: 8/9 specs complete (89%)
+**Progress**: 9/9 specs complete (100%)

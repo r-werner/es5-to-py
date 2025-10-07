@@ -11,7 +11,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:golden": "npm run build && node dist/run-golden.js"
   },
   "keywords": [
     "transpiler",
