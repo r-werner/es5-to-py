@@ -81,7 +81,7 @@ es5-to-py --help
 - Array methods: push, pop
 - `console.log()`
 - `Date.now()`
-- Regex: test, exec (with `i`, `m`, `s` flags)
+- Regex: literals `/.../flags` with `.test()` and `String.replace()` support; flags `i`, `m`, `s` supported; `exec()` out of scope
 
 ### ❌ Not Supported
 
@@ -117,8 +117,9 @@ The following features are **intentionally not supported** and will produce clea
 
 3. **Arithmetic Operators**:
    - `+` handles both number addition AND string concatenation
-   - `-`, `*`, `/`, `%` perform ToNumber coercion
+   - `-`, `*`, `/`, `%` perform ToNumber coercion (via `js_to_number()`)
    - `%` uses JavaScript remainder semantics (dividend sign), not Python modulo
+   - Augmented assignments (`+=`, `-=`, `*=`, `/=`, `%=`) use the same coercion rules
 
 4. **Logical Operators**:
    - `a && b` returns `b` if `a` is truthy, else `a` (not a boolean!)
