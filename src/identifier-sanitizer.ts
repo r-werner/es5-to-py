@@ -44,4 +44,14 @@ export class IdentifierMapper {
     }
     return sanitizeIdentifier(originalName); // Fallback
   }
+
+  isDeclared(originalName: string): boolean {
+    // Check if identifier is declared in any scope
+    for (let i = this.scopes.length - 1; i >= 0; i--) {
+      if (this.scopes[i].has(originalName)) {
+        return true;
+      }
+    }
+    return false;
+  }
 }

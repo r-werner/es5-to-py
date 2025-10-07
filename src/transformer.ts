@@ -127,6 +127,12 @@ export class Transformer {
     return this.runtimeCall('js_truthy', [arg]);
   }
 
+  // S8: Helper to check if identifier is a global mapping
+  private isGlobalIdentifier(name: string): boolean {
+    const globals = ['undefined', 'Infinity', 'NaN'];
+    return globals.includes(name);
+  }
+
   // S4: Variable hoisting helpers
   private collectVarDeclarations(node: any): Set<string> {
     const vars = new Set<string>();
@@ -202,12 +208,22 @@ export class Transformer {
 
   visitLiteral(node: any): any {
     if (node.regex) {
-      // Regex literal: defer compilation to S8
-      throw new UnsupportedFeatureError(
-        'regex',
-        node,
-        'Regex literals not yet implemented (deferred to S8)',
-        'E_REGEX'
+      // S8: Regex literal transformation
+      const { pattern, flags } = node.regex;
+
+      // Note: 'g' flag validation is complex and requires context checking
+      // For now, we allow 'g' flag and strip it in compile_js_regex
+      // TODO: Add context tracking for inline String.replace() validation
+
+      this.importManager.addRuntime('compile_js_regex');
+
+      return PyAST.Call(
+        PyAST.Name('compile_js_regex', 'Load'),
+        [
+          PyAST.Constant(pattern),
+          PyAST.Constant(flags)
+        ],
+        []
       );
     }
 
@@ -628,6 +644,15 @@ export class Transformer {
       return this.runtimeCall('js_strict_neq', [left, right]);
     }
 
+    // S8: Loose equality operators
+    if (node.operator === '==') {
+      return this.runtimeCall('js_loose_eq', [left, right]);
+    }
+
+    if (node.operator === '!=') {
+      return this.runtimeCall('js_loose_neq', [left, right]);
+    }
+
     // Comparison operators
     const comparisonOps: Record<string, string> = {
       '<': 'Lt',
@@ -720,7 +745,54 @@ export class Transformer {
       return this.runtimeCall('js_to_number', [this.visitNode(node.argument)]);
     }
 
-    // typeof, delete, void deferred to other specs
+    if (node.operator === 'typeof') {
+      // S8: typeof operator
+      // Special case: typeof undeclaredVar → 'undefined' (no error)
+      if (node.argument.type === 'Identifier') {
+        const varName = node.argument.name;
+        // Check if it's a declared variable or global mapping
+        if (!this.identifierMapper.isDeclared(varName) && !this.isGlobalIdentifier(varName)) {
+          // Undeclared identifier → return 'undefined' constant
+          return PyAST.Constant('undefined');
+        }
+      }
+
+      // Normal typeof: call js_typeof
+      return this.runtimeCall('js_typeof', [this.visitNode(node.argument)]);
+    }
+
+    if (node.operator === 'delete') {
+      // S8: delete operator
+      if (node.argument.type === 'Identifier') {
+        throw new UnsupportedFeatureError(
+          'delete-identifier',
+          node,
+          'Delete on identifiers is not supported (non-configurable binding).',
+          'E_DELETE_IDENTIFIER'
+        );
+      }
+
+      if (node.argument.type === 'MemberExpression') {
+        const obj = this.visitNode(node.argument.object);
+        let key;
+        if (node.argument.computed) {
+          key = this.visitNode(node.argument.property);
+        } else {
+          key = PyAST.Constant(node.argument.property.name);
+        }
+
+        return this.runtimeCall('js_delete', [obj, key]);
+      }
+
+      throw new UnsupportedFeatureError(
+        'delete',
+        node,
+        `Delete on ${node.argument.type} is not supported`,
+        'E_DELETE_UNSUPPORTED'
+      );
+    }
+
+    // void and other operators deferred
     throw new UnsupportedFeatureError(
       'unary-op',
       node,

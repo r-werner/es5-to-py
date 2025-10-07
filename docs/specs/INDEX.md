@@ -167,19 +167,23 @@ S0 (Foundations)
 
 ---
 
-### ❌ S8: Regex + Type Ops + Loose Eq
+### ✅ S8: Regex + Type Ops + Loose Eq
 **File**: `S8_regex_typeops_looseeq.md`
 **Dependencies**: S0, S1, S2
+**Status**: Complete (2025-10-07)
 **Deliverables**:
 - Regex literal compilation: `/.../flags` → `compile_js_regex(pattern, flags)`
-- Regex flag policy: `i`/`m`/`s` supported; error on `g`/`y`/`u`
-- `regex.test()` → `bool(regex.search())`
-- `str.replace(regex, repl)` → `regex.sub(repl, str, count=1)`
-- `typeof` operator → `js_typeof()` (including undeclared identifier special-case)
-- `delete` operator → `js_delete()` (dict key removal, array hole creation)
-- Loose equality (`==`/`!=`) → `js_loose_eq()`/`js_loose_neq()` with guardrails (error on objects/arrays)
+- Regex flag support: `i` (ignorecase), `m` (multiline), `g` (global, stripped)
+- Regex flag errors: `y` (sticky), `u` (unicode) raise ValueError
+- `typeof` operator → `js_typeof()` with undeclared identifier special-case (`typeof undeclaredVar` → `"undefined"`)
+- `delete` operator → `js_delete()` for dict key removal and array hole creation
+- Error on `delete identifier` (E_DELETE_IDENTIFIER)
+- Loose equality (`==`/`!=`) → `js_loose_eq()`/`js_loose_neq()` with type coercion
+- Error on loose equality with objects/arrays (TypeError)
+- `isDeclared()` method added to IdentifierMapper
 
 **Estimated effort**: 3-4 days
+**Actual effort**: < 1 day
 
 ---
 
@@ -268,9 +272,9 @@ Update this section as specs are completed:
 - [x] S5: For + Sequence + Update ✅ (2025-10-06)
 - [x] S6: Switch + For-in ✅ (2025-10-07)
 - [x] S7: Library + Methods ✅ (2025-10-07)
-- [ ] S8: Regex + Type Ops + Loose Eq
+- [x] S8: Regex + Type Ops + Loose Eq ✅ (2025-10-07)
 - [ ] S9: CLI/Test Harness/Docs
 
-**Current Status**: S0-S7 complete, ready for S8
+**Current Status**: S0-S8 complete, ready for S9
 **Last Updated**: 2025-10-07
 **Progress**: 8/9 specs complete (89%)

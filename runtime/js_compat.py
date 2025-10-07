@@ -272,8 +272,184 @@ def js_mod(a: object, b: object) -> Union[float, int]:
 
 
 # ============================================================================
-# Exports
+# S8: Regex Helpers
 # ============================================================================
+
+import re as _js_re
+
+def compile_js_regex(pattern: str, flags_str: str):
+    """
+    Compile JS regex to Python re pattern.
+
+    - Strip 'g' flag (Python has no global flag; handled by count in .sub())
+    - Map flags: i → IGNORECASE, m → MULTILINE, s → DOTALL
+    - Error on y (sticky), u (unicode)
+
+    Args:
+        pattern: Regex pattern string
+        flags_str: JS flags string (e.g., 'gi', 'im')
+
+    Returns:
+        re.Pattern: Compiled Python regex
+
+    Raises:
+        ValueError: If unsupported flags are used
+    """
+    # Strip 'g' flag (handled by count parameter in re.sub)
+    flags_str = flags_str.replace('g', '')
+
+    if 'y' in flags_str:
+        raise ValueError("Regex sticky flag 'y' is not supported.")
+    if 'u' in flags_str:
+        raise ValueError("Regex unicode flag 'u' is not supported.")
+
+    flags = 0
+    if 'i' in flags_str:
+        flags |= _js_re.IGNORECASE
+    if 'm' in flags_str:
+        flags |= _js_re.MULTILINE
+    if 's' in flags_str:
+        flags |= _js_re.DOTALL
+
+    return _js_re.compile(pattern, flags)
+
+
+# ============================================================================
+# S8: Type Operator (typeof)
+# ============================================================================
+
+def js_typeof(x: object) -> str:
+    """
+    JavaScript typeof operator.
+
+    Returns:
+        - 'undefined' for JSUndefined
+        - 'object' for None (null)
+        - 'boolean' for bool
+        - 'number' for int/float
+        - 'string' for str
+        - 'object' for list/dict
+        - 'function' for callable
+        - 'object' for everything else
+    """
+    if x is JSUndefined:
+        return 'undefined'
+    if x is None:
+        return 'object'
+    if isinstance(x, bool):
+        return 'boolean'
+    if isinstance(x, (int, float)):
+        return 'number'
+    if isinstance(x, str):
+        return 'string'
+    if isinstance(x, (list, dict)):
+        return 'object'
+    if callable(x):
+        return 'function'
+    return 'object'
+
+
+# ============================================================================
+# S8: Delete Operator
+# ============================================================================
+
+def js_delete(base: object, key: object) -> bool:
+    """
+    JavaScript delete operator.
+
+    - Dict: remove key if exists
+    - List: assign JSUndefined to create hole (don't use del, which shifts elements)
+    - Returns True in all cases (JS behavior)
+
+    Args:
+        base: Object to delete from
+        key: Property key or index
+
+    Returns:
+        bool: Always True (JS delete always returns true for deletable properties)
+    """
+    if isinstance(base, dict):
+        if key in base:
+            del base[key]
+        return True
+
+    if isinstance(base, list):
+        # Don't use del (shifts elements); assign JSUndefined to create hole
+        try:
+            idx = int(key) if isinstance(key, str) else key
+            if 0 <= idx < len(base):
+                base[idx] = JSUndefined
+        except (ValueError, TypeError):
+            pass
+        return True
+
+    return True  # Non-deletable properties
+
+
+# ============================================================================
+# S8: Loose Equality
+# ============================================================================
+
+def js_loose_eq(a: object, b: object) -> bool:
+    """
+    JavaScript loose equality (==).
+
+    Supported:
+    - null == undefined → True
+    - Same type → value equality
+    - Number and string → coerce string to number
+    - Boolean → coerce to number
+
+    NOT supported (error):
+    - Object/array comparisons (ToPrimitive too complex)
+
+    Args:
+        a: Left operand
+        b: Right operand
+
+    Returns:
+        bool: True if loosely equal
+
+    Raises:
+        TypeError: If comparing objects/arrays
+    """
+    # Reject objects/arrays
+    if isinstance(a, (list, dict)) or isinstance(b, (list, dict)):
+        raise TypeError("Loose equality with objects/arrays is not supported. Use strict equality (===).")
+
+    # NaN handling
+    if isinstance(a, float) and _js_math.isnan(a):
+        return False
+    if isinstance(b, float) and _js_math.isnan(b):
+        return False
+
+    # null == undefined
+    if (a is None and b is JSUndefined) or (a is JSUndefined and b is None):
+        return True
+
+    # Same type
+    if type(a) == type(b):
+        return a == b
+
+    # Number and string
+    if isinstance(a, (int, float)) and isinstance(b, str):
+        return a == js_to_number(b)
+    if isinstance(a, str) and isinstance(b, (int, float)):
+        return js_to_number(a) == b
+
+    # Boolean coercion
+    if isinstance(a, bool):
+        return js_loose_eq(1 if a else 0, b)
+    if isinstance(b, bool):
+        return js_loose_eq(a, 1 if b else 0)
+
+    return False
+
+
+def js_loose_neq(a: object, b: object) -> bool:
+    """JavaScript loose inequality (!=)."""
+    return not js_loose_eq(a, b)
+
 
 # ============================================================================
 # For-in Enumeration
@@ -448,6 +624,11 @@ __all__ = [
     'js_mul',
     'js_div',
     'js_mod',
+    'compile_js_regex',
+    'js_typeof',
+    'js_delete',
+    'js_loose_eq',
+    'js_loose_neq',
     'js_for_in_keys',
     'js_round',
     'js_char_code_at',
