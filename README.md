@@ -81,7 +81,7 @@ es5-to-py --help
 - Array methods: push, pop
 - `console.log()`
 - `Date.now()`
-- Regex: literals `/.../flags` with `.test()` and `String.replace()` support; flags `i`, `m`, `s` supported; `exec()` out of scope
+- Regex: literals `/.../flags` with `.test()` and limited `String.replace()` support; flags `i`, `m`, `s` supported
 
 ### ❌ Not Supported
 
@@ -116,10 +116,14 @@ The following features are **intentionally not supported** and will produce clea
    - Truthy values: `[]`, `{}`, non-empty strings, non-zero numbers
 
 3. **Arithmetic Operators**:
-   - `+` handles both number addition AND string concatenation
-   - `-`, `*`, `/`, `%` perform ToNumber coercion (via `js_to_number()`)
+   - `+` handles both number addition AND string concatenation (via `js_add()`)
+   - `-`, `*`, `/`, `%` perform ToNumber coercion (via `js_sub()`, `js_mul()`, `js_div()`, `js_mod()`)
    - `%` uses JavaScript remainder semantics (dividend sign), not Python modulo
-   - Augmented assignments (`+=`, `-=`, `*=`, `/=`, `%=`) use the same coercion rules
+   - **Augmented assignments** (`+=`, `-=`, `*=`, `/=`, `%=`) use the same runtime helpers:
+     - `x += y` → `x = js_add(x, y)` (handles both string concat and numeric addition)
+     - `x -= y` → `x = js_sub(x, y)` (ToNumber coercion on both operands)
+     - `x *= y` → `x = js_mul(x, y)` (ToNumber coercion on both operands)
+     - Similar for `/=` and `%=`
 
 4. **Logical Operators**:
    - `a && b` returns `b` if `a` is truthy, else `a` (not a boolean!)
